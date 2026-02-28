@@ -1,5 +1,5 @@
 use commitmux_types::{
-    Commit, CommitPatch, CommitmuxError, IgnoreConfig, IngestState, IngestSummary, Repo, Result,
+    Commit, CommitPatch, CommitmuxError, IgnoreConfig, IngestState, SyncSummary, Repo, Result,
     Store,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,9 +26,8 @@ impl commitmux_types::Ingester for Git2Ingester {
         repo: &Repo,
         store: &dyn Store,
         config: &IgnoreConfig,
-    ) -> Result<IngestSummary> {
-        let mut summary = IngestSummary {
-            repo_name: repo.name.clone(),
+    ) -> Result<SyncSummary> {
+        let mut summary = SyncSummary {
             commits_indexed: 0,
             commits_already_indexed: 0,
             commits_filtered: 0,

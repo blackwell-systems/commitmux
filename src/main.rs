@@ -431,7 +431,7 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            println!("{:<20} {:>8}  {:<45}  {}", "REPO", "COMMITS", "SOURCE", "LAST SYNCED");
+            println!("{:<20} {:>8}  {:<45}  LAST SYNCED", "REPO", "COMMITS", "SOURCE");
             for r in &repos {
                 // Determine source display: remote URL if present, else truncated local path
                 let source = if let Some(ref url) = r.remote_url {

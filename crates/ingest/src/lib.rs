@@ -115,6 +115,10 @@ mod tests {
         fn repo_stats(&self, _repo_id: i64) -> Result<RepoStats> {
             unimplemented!()
         }
+
+        fn count_commits_for_repo(&self, _repo_id: i64) -> Result<usize> {
+            Ok(0)
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

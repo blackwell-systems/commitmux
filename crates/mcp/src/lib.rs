@@ -387,7 +387,7 @@ mod tests {
                     subject: "test commit".into(),
                     body: None,
                     author: "Alice".into(),
-                    date: 1700000000,
+                    date: "2023-11-14T22:13:20Z".into(),
                     changed_files: vec![],
                 }))
             } else {
@@ -414,6 +414,10 @@ mod tests {
 
         fn repo_stats(&self, _repo_id: i64) -> StoreResult<RepoStats> {
             unimplemented!()
+        }
+
+        fn count_commits_for_repo(&self, _repo_id: i64) -> StoreResult<usize> {
+            Ok(0)
         }
     }
 
@@ -454,6 +458,7 @@ mod tests {
         fn get_commit(&self, _: &str, _: &str) -> StoreResult<Option<CommitDetail>> { unimplemented!() }
         fn get_patch(&self, _: &str, _: &str, _: Option<usize>) -> StoreResult<Option<PatchResult>> { unimplemented!() }
         fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> { unimplemented!() }
+        fn count_commits_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
     }
 
     #[test]
