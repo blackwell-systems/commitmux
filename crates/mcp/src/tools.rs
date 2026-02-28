@@ -38,6 +38,15 @@ pub struct GetPatchInput {
 #[derive(Debug, Deserialize, Default)]
 pub struct ListReposInput {}
 
+/// Input type for the `commitmux_search_semantic` tool.
+#[derive(Debug, Deserialize)]
+pub struct SemanticSearchInput {
+    pub query: String,
+    pub repos: Option<Vec<String>>,
+    pub since: Option<i64>,
+    pub limit: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

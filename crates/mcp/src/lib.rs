@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use commitmux_types::{SearchOpts, Store, TouchOpts};
 use serde_json::{json, Value};
-use tools::{GetCommitInput, GetPatchInput, SearchInput, TouchesInput};
+use tools::{GetCommitInput, GetPatchInput, SearchInput, SemanticSearchInput, TouchesInput};
 // ListReposInput is defined in tools.rs for API consistency but has no fields to parse
 #[allow(unused_imports)]
 use tools::ListReposInput;
@@ -179,6 +179,20 @@ impl McpServer {
                             "type": "object",
                             "properties": {}
                         }
+                    },
+                    {
+                        "name": "commitmux_search_semantic",
+                        "description": "Semantic search over indexed commits using vector similarity. Use when keyword search is insufficient — e.g. 'find commits related to rate limiting' or 'work similar to this description'. Only returns results for repos with embeddings enabled.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": { "type": "string", "description": "Natural language description of what you're looking for" },
+                                "repos": { "type": "array", "items": { "type": "string" }, "description": "Optional list of repo names to search within" },
+                                "since": { "type": "integer", "description": "Optional Unix timestamp lower bound" },
+                                "limit": { "type": "integer", "description": "Max results (default 10)" }
+                            },
+                            "required": ["query"]
+                        }
                     }
                 ]
             }
@@ -198,6 +212,7 @@ impl McpServer {
             "commitmux_get_commit" => self.call_get_commit(&arguments),
             "commitmux_get_patch" => self.call_get_patch(&arguments),
             "commitmux_list_repos" => self.call_list_repos(&arguments),
+            "commitmux_search_semantic" => self.call_search_semantic(&arguments),
             other => Err(format!("Unknown tool: {other}")),
         };
 
@@ -296,6 +311,37 @@ impl McpServer {
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             })
     }
+
+    fn call_search_semantic(&self, arguments: &Value) -> Result<String, String> {
+        use commitmux_types::SemanticSearchOpts;
+
+        let input: SemanticSearchInput = serde_json::from_value(arguments.clone())
+            .map_err(|e| format!("Invalid arguments: {e}"))?;
+
+        // Build embedder from store config
+        let config = commitmux_embed::EmbedConfig::from_store(self.store.as_ref())
+            .map_err(|e| format!("Embed config error: {e}"))?;
+        let embedder = commitmux_embed::Embedder::new(&config);
+
+        // Embed the query (async → sync via block_on)
+        let embedding = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to build tokio runtime: {e}"))?
+            .block_on(embedder.embed(&input.query))
+            .map_err(|e| format!("Failed to embed query: {e}"))?;
+
+        // Search
+        let opts = SemanticSearchOpts {
+            repos: input.repos,
+            since: input.since,
+            limit: input.limit,
+        };
+        let results = self.store.search_semantic(&embedding, &opts)
+            .map_err(|e| format!("Semantic search failed: {e}"))?;
+
+        serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]
@@ -305,8 +351,8 @@ mod tests {
         CommitDetail, PatchResult, Result as StoreResult, SearchResult, Store, TouchResult,
     };
     use commitmux_types::{
-        Commit, CommitFile, CommitPatch, IngestState, Repo, RepoInput, RepoListEntry,
-        RepoStats, RepoUpdate, SearchOpts, TouchOpts,
+        Commit, CommitFile, CommitPatch, EmbedCommit, IngestState, Repo, RepoInput, RepoListEntry,
+        RepoStats, RepoUpdate, SearchOpts, SemanticSearchOpts, TouchOpts,
     };
 
     /// A minimal in-memory stub store for testing.
@@ -421,6 +467,13 @@ mod tests {
         fn count_commits_for_repo(&self, _repo_id: i64) -> StoreResult<usize> {
             Ok(0)
         }
+
+        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
+        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
+        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
+        #[allow(clippy::too_many_arguments)]
+        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> StoreResult<()> { Ok(()) }
+        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> StoreResult<Vec<SearchResult>> { Ok(vec![]) }
     }
 
     fn make_server() -> McpServer {
@@ -461,6 +514,12 @@ mod tests {
         fn get_patch(&self, _: &str, _: &str, _: Option<usize>) -> StoreResult<Option<PatchResult>> { unimplemented!() }
         fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> { unimplemented!() }
         fn count_commits_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
+        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
+        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
+        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
+        #[allow(clippy::too_many_arguments)]
+        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> StoreResult<()> { Ok(()) }
+        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> StoreResult<Vec<SearchResult>> { Ok(vec![]) }
     }
 
     #[test]
@@ -498,7 +557,7 @@ mod tests {
             tool_names.contains(&"commitmux_get_patch"),
             "missing commitmux_get_patch"
         );
-        assert_eq!(tool_names.len(), 5, "must have exactly 5 tools");
+        assert_eq!(tool_names.len(), 6, "must have exactly 6 tools");
     }
 
     #[test]
@@ -642,5 +701,56 @@ mod tests {
         assert!(msg.contains("JSON-RPC over stdio"), "startup message should mention transport");
         assert!(msg.contains("Ctrl+C"), "startup message should mention how to stop");
         assert!(!msg.is_empty());
+    }
+
+    #[test]
+    fn test_tools_list_includes_semantic() {
+        let server = make_server();
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let response_str = server
+            .handle_message(request)
+            .expect("tools/list must produce a response");
+        let response: Value =
+            serde_json::from_str(&response_str).expect("response must be valid JSON");
+
+        let tools = response["result"]["tools"]
+            .as_array()
+            .expect("result.tools must be an array");
+
+        let tool_names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+
+        assert!(
+            tool_names.contains(&"commitmux_search_semantic"),
+            "missing commitmux_search_semantic"
+        );
+    }
+
+    #[test]
+    fn test_search_semantic_missing_query() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_semantic",
+                "arguments": {}
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        // Missing required field "query" => isError: true
+        assert_eq!(
+            response["result"]["isError"], true,
+            "missing query should return an error response"
+        );
     }
 }
