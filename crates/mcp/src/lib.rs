@@ -318,6 +318,31 @@ impl McpServer {
         let input: SemanticSearchInput = serde_json::from_value(arguments.clone())
             .map_err(|e| format!("Invalid arguments: {e}"))?;
 
+        // Validation: Empty query
+        if input.query.trim().is_empty() {
+            return Err("Query cannot be empty".to_string());
+        }
+
+        // Validation: Limit = 0
+        if let Some(limit) = input.limit {
+            if limit == 0 {
+                return Err("Limit must be greater than 0".to_string());
+            }
+        }
+
+        // Validation: Nonexistent repo filters
+        if let Some(ref repos) = input.repos {
+            let all_repos = self.store.list_repos().map_err(|e| e.to_string())?;
+            let existing_names: Vec<&str> = all_repos.iter().map(|r| r.name.as_str()).collect();
+            let unknown: Vec<&str> = repos.iter()
+                .filter(|r| !existing_names.contains(&r.as_str()))
+                .map(|s| s.as_str())
+                .collect();
+            if !unknown.is_empty() {
+                return Err(format!("Unknown repo(s): {}", unknown.join(", ")));
+            }
+        }
+
         // Build embedder from store config
         let config = commitmux_embed::EmbedConfig::from_store(self.store.as_ref())
             .map_err(|e| format!("Embed config error: {e}"))?;
@@ -363,7 +388,8 @@ mod tests {
             unimplemented!()
         }
         fn list_repos(&self) -> StoreResult<Vec<Repo>> {
-            unimplemented!()
+            // Return empty list for validation tests
+            Ok(vec![])
         }
         fn get_repo_by_name(&self, _name: &str) -> StoreResult<Option<Repo>> {
             unimplemented!()
@@ -498,7 +524,32 @@ mod tests {
             ])
         }
         fn add_repo(&self, _: &RepoInput) -> StoreResult<Repo> { unimplemented!() }
-        fn list_repos(&self) -> StoreResult<Vec<Repo>> { unimplemented!() }
+        fn list_repos(&self) -> StoreResult<Vec<Repo>> {
+            Ok(vec![
+                Repo {
+                    repo_id: 1,
+                    name: "repo-alpha".into(),
+                    local_path: "/path/alpha".into(),
+                    remote_url: None,
+                    default_branch: None,
+                    fork_of: None,
+                    author_filter: None,
+                    exclude_prefixes: vec![],
+                    embed_enabled: false,
+                },
+                Repo {
+                    repo_id: 2,
+                    name: "repo-beta".into(),
+                    local_path: "/path/beta".into(),
+                    remote_url: None,
+                    default_branch: None,
+                    fork_of: None,
+                    author_filter: None,
+                    exclude_prefixes: vec![],
+                    embed_enabled: false,
+                },
+            ])
+        }
         fn get_repo_by_name(&self, _: &str) -> StoreResult<Option<Repo>> { unimplemented!() }
         fn remove_repo(&self, _: &str) -> StoreResult<()> { unimplemented!() }
         fn commit_exists(&self, _: i64, _: &str) -> StoreResult<bool> { unimplemented!() }
@@ -752,5 +803,92 @@ mod tests {
             response["result"]["isError"], true,
             "missing query should return an error response"
         );
+    }
+
+    #[test]
+    fn test_search_semantic_rejects_empty_query() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_semantic",
+                "arguments": { "query": "" }
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(
+            response["result"]["isError"], true,
+            "empty query should return an error response"
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        assert!(text.contains("Query cannot be empty"));
+    }
+
+    #[test]
+    fn test_search_semantic_rejects_limit_zero() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_semantic",
+                "arguments": { "query": "test", "limit": 0 }
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(
+            response["result"]["isError"], true,
+            "limit=0 should return an error response"
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        assert!(text.contains("Limit must be greater than 0"));
+    }
+
+    #[test]
+    fn test_search_semantic_rejects_nonexistent_repo() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_semantic",
+                "arguments": { "query": "test", "repos": ["nonexistent-repo"] }
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(
+            response["result"]["isError"], true,
+            "nonexistent repo should return an error response"
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        assert!(text.contains("Unknown repo(s)"));
     }
 }
