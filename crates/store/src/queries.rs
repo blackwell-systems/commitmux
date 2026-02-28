@@ -2,7 +2,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::MutexGuard;
 
 use commitmux_types::{
-    Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, IngestState,
+    Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, CommitmuxError, IngestState,
     PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
     SearchResult, Store, TouchOpts, TouchResult,
 };
@@ -11,6 +11,13 @@ use crate::SqliteStore;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
+fn parse_exclude_prefixes(s: Option<String>) -> Vec<String> {
+    match s {
+        None => vec![],
+        Some(j) => serde_json::from_str::<Vec<String>>(&j).unwrap_or_default(),
+    }
+}
+
 fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
     Ok(Repo {
         repo_id: row.get(0)?,
@@ -18,9 +25,9 @@ fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
         remote_url: row.get(3)?,
         default_branch: row.get(4)?,
-        fork_of: None,
-        author_filter: None,
-        exclude_prefixes: vec![],
+        fork_of: row.get(5)?,
+        author_filter: row.get(6)?,
+        exclude_prefixes: parse_exclude_prefixes(row.get(7)?),
     })
 }
 
@@ -31,13 +38,19 @@ impl Store for SqliteStore {
 
     fn add_repo(&self, input: &RepoInput) -> Result<Repo> {
         let conn: MutexGuard<'_, Connection> = self.conn.lock().unwrap();
+        let exclude_json = serde_json::to_string(&input.exclude_prefixes)
+            .unwrap_or_else(|_| "[]".to_string());
         conn.execute(
-            "INSERT INTO repos (name, local_path, remote_url, default_branch) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO repos (name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 input.name,
                 input.local_path.to_string_lossy().as_ref(),
                 input.remote_url,
                 input.default_branch,
+                input.fork_of,
+                input.author_filter,
+                exclude_json,
             ],
         )?;
         let repo_id = conn.last_insert_rowid();
@@ -47,16 +60,16 @@ impl Store for SqliteStore {
             local_path: input.local_path.clone(),
             remote_url: input.remote_url.clone(),
             default_branch: input.default_branch.clone(),
-            fork_of: None,
-            author_filter: None,
-            exclude_prefixes: vec![],
+            fork_of: input.fork_of.clone(),
+            author_filter: input.author_filter.clone(),
+            exclude_prefixes: input.exclude_prefixes.clone(),
         })
     }
 
     fn list_repos(&self) -> Result<Vec<Repo>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT repo_id, name, local_path, remote_url, default_branch FROM repos ORDER BY repo_id",
+            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos ORDER BY repo_id",
         )?;
         let repos: rusqlite::Result<Vec<Repo>> =
             stmt.query_map([], row_to_repo)?.collect();
@@ -67,24 +80,12 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let result = conn
             .query_row(
-                "SELECT repo_id, name, local_path, remote_url, default_branch FROM repos WHERE name = ?1",
+                "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE name = ?1",
                 params![name],
                 row_to_repo,
             )
             .optional()?;
         Ok(result)
-    }
-
-    fn remove_repo(&self, _name: &str) -> Result<()> {
-        unimplemented!("remove_repo: to be implemented by Agent B")
-    }
-
-    fn update_repo(&self, _repo_id: i64, _update: &RepoUpdate) -> Result<Repo> {
-        unimplemented!("update_repo: to be implemented by Agent B")
-    }
-
-    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
-        unimplemented!("list_repos_with_stats: to be implemented by Agent B")
     }
 
     // ── Ingest writes ─────────────────────────────────────────────────────
@@ -283,10 +284,6 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn commit_exists(&self, _repo_id: i64, _sha: &str) -> Result<bool> {
-        unimplemented!("commit_exists: to be implemented by Agent B")
-    }
-
     // ── MCP queries ───────────────────────────────────────────────────────
 
     fn search(&self, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>> {
@@ -483,7 +480,8 @@ impl Store for SqliteStore {
                 "SELECT c.repo_id, c.sha, c.subject, c.body, c.author_name, c.author_time
                  FROM commits c
                  JOIN repos r ON r.repo_id = c.repo_id
-                 WHERE r.name = ?1 AND c.sha = ?2",
+                 WHERE r.name = ?1 AND c.sha LIKE ?2 || '%'
+                 ORDER BY c.author_time DESC",
                 params![repo_name, sha_prefix],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             )
@@ -518,6 +516,141 @@ impl Store for SqliteStore {
                 }))
             }
         }
+    }
+
+    fn remove_repo(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // 1. Look up repo_id
+        let repo_id: Option<i64> = conn.query_row(
+            "SELECT repo_id FROM repos WHERE name = ?1",
+            params![name],
+            |row| row.get(0),
+        ).optional()?;
+
+        let repo_id = repo_id.ok_or_else(|| CommitmuxError::NotFound(
+            format!("repo '{}' not found", name)
+        ))?;
+
+        // 2. Delete patches
+        conn.execute("DELETE FROM commit_patches WHERE repo_id = ?1", params![repo_id])?;
+
+        // 3. Delete files
+        conn.execute("DELETE FROM commit_files WHERE repo_id = ?1", params![repo_id])?;
+
+        // 4. Delete ingest state
+        conn.execute("DELETE FROM ingest_state WHERE repo_id = ?1", params![repo_id])?;
+
+        // 5. Delete commits (drop FTS entries first via rebuild after delete)
+        conn.execute("DELETE FROM commits WHERE repo_id = ?1", params![repo_id])?;
+
+        // 6. Rebuild FTS to reflect deleted commits
+        conn.execute("INSERT INTO commits_fts(commits_fts) VALUES('rebuild')", [])?;
+
+        // 7. Delete repo
+        conn.execute("DELETE FROM repos WHERE repo_id = ?1", params![repo_id])?;
+
+        Ok(())
+    }
+
+    fn commit_exists(&self, repo_id: i64, sha: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM commits WHERE repo_id = ?1 AND sha = ?2",
+            params![repo_id, sha],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    fn update_repo(&self, repo_id: i64, update: &RepoUpdate) -> Result<Repo> {
+        let conn = self.conn.lock().unwrap();
+
+        let mut set_clauses: Vec<String> = Vec::new();
+        let mut bind_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut idx = 1usize;
+
+        if let Some(ref v) = update.fork_of {
+            set_clauses.push(format!("fork_of = ?{}", idx));
+            bind_vals.push(match v {
+                Some(s) => Box::new(s.clone()),
+                None => Box::new(rusqlite::types::Null),
+            });
+            idx += 1;
+        }
+        if let Some(ref v) = update.author_filter {
+            set_clauses.push(format!("author_filter = ?{}", idx));
+            bind_vals.push(match v {
+                Some(s) => Box::new(s.clone()),
+                None => Box::new(rusqlite::types::Null),
+            });
+            idx += 1;
+        }
+        if let Some(ref v) = update.exclude_prefixes {
+            let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string());
+            set_clauses.push(format!("exclude_prefixes = ?{}", idx));
+            bind_vals.push(Box::new(json));
+            idx += 1;
+        }
+        if let Some(ref v) = update.default_branch {
+            set_clauses.push(format!("default_branch = ?{}", idx));
+            bind_vals.push(match v {
+                Some(s) => Box::new(s.clone()),
+                None => Box::new(rusqlite::types::Null),
+            });
+            idx += 1;
+        }
+
+        if !set_clauses.is_empty() {
+            let sql = format!(
+                "UPDATE repos SET {} WHERE repo_id = ?{}",
+                set_clauses.join(", "),
+                idx
+            );
+            bind_vals.push(Box::new(repo_id));
+            let params: Vec<&dyn rusqlite::types::ToSql> =
+                bind_vals.iter().map(|b| b.as_ref()).collect();
+            conn.execute(&sql, params.as_slice())?;
+        }
+
+        // Re-fetch
+        let repo = conn.query_row(
+            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE repo_id = ?1",
+            params![repo_id],
+            |row| {
+                Ok(Repo {
+                    repo_id: row.get(0)?,
+                    name: row.get(1)?,
+                    local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
+                    remote_url: row.get(3)?,
+                    default_branch: row.get(4)?,
+                    fork_of: row.get(5)?,
+                    author_filter: row.get(6)?,
+                    exclude_prefixes: parse_exclude_prefixes(row.get(7)?),
+                })
+            },
+        )?;
+
+        Ok(repo)
+    }
+
+    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.name, COUNT(c.sha), i.last_synced_at
+             FROM repos r
+             LEFT JOIN commits c ON c.repo_id = r.repo_id
+             LEFT JOIN ingest_state i ON i.repo_id = r.repo_id
+             GROUP BY r.repo_id
+             ORDER BY r.repo_id"
+        )?;
+        let rows: rusqlite::Result<Vec<RepoListEntry>> = stmt.query_map([], |row| {
+            Ok(RepoListEntry {
+                name: row.get(0)?,
+                commit_count: row.get::<_, i64>(1)? as usize,
+                last_synced_at: row.get(2)?,
+            })
+        })?.collect();
+        Ok(rows?)
     }
 
     fn get_patch(&self, repo_name: &str, sha: &str, max_bytes: Option<usize>) -> Result<Option<PatchResult>> {
