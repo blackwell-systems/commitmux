@@ -3,8 +3,8 @@ use std::sync::MutexGuard;
 
 use commitmux_types::{
     Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, IngestState,
-    PatchResult, Repo, RepoInput, RepoStats, Result, SearchOpts, SearchResult, Store, TouchOpts,
-    TouchResult,
+    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
+    SearchResult, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -12,12 +12,25 @@ use crate::SqliteStore;
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
+    let exclude_raw: Option<String> = row.get(7)?;
+    let exclude_prefixes = exclude_raw
+        .map(|s| {
+            if s.is_empty() {
+                vec![]
+            } else {
+                s.split('\x1F').map(str::to_owned).collect()
+            }
+        })
+        .unwrap_or_default();
     Ok(Repo {
         repo_id: row.get(0)?,
         name: row.get(1)?,
         local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
         remote_url: row.get(3)?,
         default_branch: row.get(4)?,
+        fork_of: row.get(5)?,
+        author_filter: row.get(6)?,
+        exclude_prefixes,
     })
 }
 
@@ -28,13 +41,21 @@ impl Store for SqliteStore {
 
     fn add_repo(&self, input: &RepoInput) -> Result<Repo> {
         let conn: MutexGuard<'_, Connection> = self.conn.lock().unwrap();
+        let exclude_str: Option<String> = if input.exclude_prefixes.is_empty() {
+            None
+        } else {
+            Some(input.exclude_prefixes.join("\x1F"))
+        };
         conn.execute(
-            "INSERT INTO repos (name, local_path, remote_url, default_branch) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO repos (name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 input.name,
                 input.local_path.to_string_lossy().as_ref(),
                 input.remote_url,
                 input.default_branch,
+                input.fork_of,
+                input.author_filter,
+                exclude_str,
             ],
         )?;
         let repo_id = conn.last_insert_rowid();
@@ -44,13 +65,16 @@ impl Store for SqliteStore {
             local_path: input.local_path.clone(),
             remote_url: input.remote_url.clone(),
             default_branch: input.default_branch.clone(),
+            fork_of: input.fork_of.clone(),
+            author_filter: input.author_filter.clone(),
+            exclude_prefixes: input.exclude_prefixes.clone(),
         })
     }
 
     fn list_repos(&self) -> Result<Vec<Repo>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT repo_id, name, local_path, remote_url, default_branch FROM repos ORDER BY repo_id",
+            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos ORDER BY repo_id",
         )?;
         let repos: rusqlite::Result<Vec<Repo>> =
             stmt.query_map([], row_to_repo)?.collect();
@@ -61,7 +85,7 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let result = conn
             .query_row(
-                "SELECT repo_id, name, local_path, remote_url, default_branch FROM repos WHERE name = ?1",
+                "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE name = ?1",
                 params![name],
                 row_to_repo,
             )
@@ -325,6 +349,7 @@ impl Store for SqliteStore {
             .chain(bind_vals.iter().map(|b| b.as_ref()))
             .collect();
 
+        #[allow(clippy::type_complexity)]
         let rows: rusqlite::Result<Vec<(i64, String, String, String, i64, String, String)>> =
             stmt.query_map(all_params.as_slice(), |row| {
                 Ok((
@@ -535,6 +560,96 @@ impl Store for SqliteStore {
                 }))
             }
         }
+    }
+
+    fn remove_repo(&self, name: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let rows = conn.execute("DELETE FROM repos WHERE name = ?1", params![name])?;
+        if rows == 0 {
+            return Err(commitmux_types::CommitmuxError::NotFound(
+                format!("repo '{}' not found", name),
+            ));
+        }
+        Ok(())
+    }
+
+    fn commit_exists(&self, repo_id: i64, sha: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM commits WHERE repo_id = ?1 AND sha = ?2",
+            params![repo_id, sha],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
+    fn update_repo(&self, repo_id: i64, update: &RepoUpdate) -> Result<Repo> {
+        let conn = self.conn.lock().unwrap();
+
+        if let Some(ref v) = update.fork_of {
+            conn.execute(
+                "UPDATE repos SET fork_of = ?1 WHERE repo_id = ?2",
+                params![v.as_deref(), repo_id],
+            )?;
+        }
+        if let Some(ref v) = update.author_filter {
+            conn.execute(
+                "UPDATE repos SET author_filter = ?1 WHERE repo_id = ?2",
+                params![v.as_deref(), repo_id],
+            )?;
+        }
+        if let Some(ref v) = update.exclude_prefixes {
+            let s: Option<String> = if v.is_empty() {
+                None
+            } else {
+                Some(v.join("\x1F"))
+            };
+            conn.execute(
+                "UPDATE repos SET exclude_prefixes = ?1 WHERE repo_id = ?2",
+                params![s, repo_id],
+            )?;
+        }
+        if let Some(ref v) = update.default_branch {
+            conn.execute(
+                "UPDATE repos SET default_branch = ?1 WHERE repo_id = ?2",
+                params![v.as_deref(), repo_id],
+            )?;
+        }
+
+        let result = conn
+            .query_row(
+                "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE repo_id = ?1",
+                params![repo_id],
+                row_to_repo,
+            )
+            .optional()?;
+        result.ok_or_else(|| commitmux_types::CommitmuxError::NotFound(
+            format!("repo id {} not found", repo_id),
+        ))
+    }
+
+    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT r.name,
+                    COUNT(c.sha) AS commit_count,
+                    MAX(i.last_synced_at) AS last_synced_at
+             FROM repos r
+             LEFT JOIN commits c ON c.repo_id = r.repo_id
+             LEFT JOIN ingest_state i ON i.repo_id = r.repo_id
+             GROUP BY r.repo_id
+             ORDER BY r.repo_id",
+        )?;
+        let entries: rusqlite::Result<Vec<RepoListEntry>> = stmt
+            .query_map([], |row| {
+                Ok(RepoListEntry {
+                    name: row.get(0)?,
+                    commit_count: row.get::<_, i64>(1)? as usize,
+                    last_synced_at: row.get(2)?,
+                })
+            })?
+            .collect();
+        Ok(entries?)
     }
 
     fn repo_stats(&self, repo_id: i64) -> Result<RepoStats> {
