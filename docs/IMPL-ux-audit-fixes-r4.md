@@ -906,10 +906,10 @@ After Wave 1 completes:
 
 ## Status
 
-- [ ] Wave 1 Agent A - Fix semantic search SQL query bug (R4-01)
-- [ ] Wave 1 Agent B - Add embedding setup guidance to help text (R4-02)
-- [ ] Wave 1 Agent C - Distinguish enabled vs generated embeddings in status (R4-03)
-- [ ] Wave 1 Agent D - Add input validation to semantic search (R4-04, R4-05)
+- [x] Wave 1 Agent A - Fix semantic search SQL query bug (R4-01) ✅
+- [x] Wave 1 Agent B - Add embedding setup guidance to help text (R4-02) ✅
+- [x] Wave 1 Agent C - Distinguish enabled vs generated embeddings in status (R4-03) ✅
+- [x] Wave 1 Agent D - Add input validation to semantic search (R4-04, R4-05) ✅
 
 **Deferred to future work:**
 - R4-06: Add incremental progress for embedding generation (>100 commits)
@@ -1028,4 +1028,55 @@ verification: PASS (cargo test --workspace — 70/70 tests, 3 new tests pass)
 
 ## Post-Merge Notes
 
-(To be filled after wave merges and verification)
+**Date:** 2026-02-28
+**Execution time:** ~5 minutes (parallel execution of 4 agents)
+
+### Merge Summary
+
+All 4 Wave 1 agents completed successfully and were merged into main:
+
+1. **Agent B** - Merged cleanly (help text strings only)
+2. **Agent D** - Merged cleanly (MCP validation logic)
+3. **Agent A** - Merged cleanly (critical SQL fix + 3 tests)
+4. **Agent C** - Merge conflict in `crates/store/src/queries.rs` (resolved manually)
+
+**Conflict resolution:** Agent A and Agent C both added tests at the end of the test module. Resolved by keeping all 5 tests (3 from A, 2 from C).
+
+### Verification Results
+
+✅ **Build:** `cargo build` - SUCCESS
+✅ **Clippy:** `cargo clippy -- -D warnings` - NO WARNINGS
+✅ **Tests:** `cargo test --workspace` - **78/78 tests passing**
+
+**Test breakdown:**
+- 70 existing tests (pre-Wave 1)
+- 3 new tests from Agent A (semantic search)
+- 2 new tests from Agent C (count_embeddings)
+- 3 new tests from Agent D (MCP validation)
+
+### Critical Bug Fixed
+
+**R4-01:** Semantic search zero-results bug resolved. Root cause was a filter logic error (`'' = ?3` should be `'[]' = ?3`) combined with the need to refactor the SQL query to use a subquery pattern that satisfies sqlite-vec's requirements.
+
+### Interface Changes
+
+**New Store trait method added:**
+```rust
+fn count_embeddings_for_repo(&self, repo_id: i64) -> Result<usize>;
+```
+
+Implemented in:
+- `SqliteStore` (crates/store/src/queries.rs)
+- `MockStore` (crates/ingest/src/lib.rs)
+- `NullStore` (crates/embed/src/lib.rs)
+- `StubStore` and `StubStoreWithRepos` (crates/mcp/src/lib.rs)
+
+### Worktrees Cleaned
+
+All worktrees and branches removed:
+- `.claude/worktrees/wave1-agent-{a,b,c,d}` - removed
+- `wave1-agent-{a,b,c,d}` branches - deleted
+
+### Next Steps
+
+R4 audit findings **R4-01 through R4-05** are complete. Items **R4-06 and R4-07** (progress indicators for embedding generation) are deferred to future work as they require larger refactoring and are not blocking for semantic search functionality.
