@@ -604,10 +604,6 @@ Full build and all tests including integration test must pass.
 
 ### Status
 
-- [ ] Wave 0: Agent A — types crate (all shared structs, traits, error types)
-- [ ] Wave 1: Agent B — store crate (SQLite + FTS5 + zstd)
-- [ ] Wave 1: Agent C — ingest crate (git2 walking + patch extraction)
-- [ ] Wave 1: Agent D — mcp crate (rmcp stdio server + 4 tools)
 - [x] Wave 0: Agent A — types crate (all shared structs, traits, error types)
 - [ ] Wave 1: Agent B — store crate (SQLite + FTS5 + zstd)
 - [ ] Wave 1: Agent C — ingest crate (git2 walking + patch extraction)
