@@ -28,11 +28,14 @@ cargo install --path .
 # 2. Create the database
 commitmux init
 
-# 3. Register repos
+# 3. Register repos — local paths or remote URLs
 commitmux add-repo ~/code/myproject
 commitmux add-repo ~/code/anotherproject --name another
 
-# 4. Ingest commits
+# Remote repos are auto-cloned to ~/.commitmux/clones/<name>/
+commitmux add-repo --url git@github.com:org/repo.git
+
+# 4. Ingest commits (fetches from remote first for URL-based repos)
 commitmux sync
 
 # 5. Start the MCP server (stdio transport — run by your agent host, not manually)
@@ -56,10 +59,11 @@ commitmux init --db /data/commitmux.sqlite3
 
 ### `add-repo`
 
-Register a local git repository. The repo name defaults to the directory name.
+Register a git repository. Accepts either a local path or a remote URL via `--url`. The repo name defaults to the directory name (local path) or the repository base name (URL).
 
 ```sh
 commitmux add-repo <path> [--name <name>] [--exclude <prefix>]...
+commitmux add-repo --url <git-url> [--name <name>] [--exclude <prefix>]...
 ```
 
 ```sh
@@ -71,9 +75,17 @@ commitmux add-repo ~/code/myproject --name myproject
 
 # Exclude additional path prefixes on top of the defaults
 commitmux add-repo ~/code/myproject --exclude generated/ --exclude proto/
+
+# Add a remote repo (auto-clones to ~/.commitmux/clones/<name>/ on first sync)
+commitmux add-repo --url git@github.com:org/repo.git
+
+# Add a remote repo over HTTPS
+commitmux add-repo --url https://github.com/org/repo.git --name repo
 ```
 
 The `--exclude` flag appends to the default ignore list. Default ignored prefixes: `node_modules/`, `vendor/`, `dist/`, `.git/`.
+
+SSH remotes use the SSH agent for authentication. Ensure your SSH agent is running and has the relevant key loaded (`ssh-add`) before running `sync` against an SSH URL.
 
 ### `sync`
 
@@ -85,6 +97,8 @@ commitmux sync --repo myproject
 ```
 
 Ingestion walks the default branch only. Commits are skipped if the patch exceeds 1 MB or contains only binary diffs. Run `sync` again at any time to pick up new commits.
+
+For repos registered with `--url`, `sync` automatically fetches from the remote before walking history. No additional flags are needed — a plain `commitmux sync` keeps URL-based repos up to date.
 
 ### `show`
 

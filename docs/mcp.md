@@ -42,7 +42,7 @@ commitmux provides a third option: a local index that the agent queries like a d
 
 - The agent never touches the git repos directly.
 - The MCP server never touches the network.
-- `commitmux sync` is the only component that reads git history. It runs as a separate CLI command or can be scheduled.
+- `commitmux sync` is the only component that reads git history. It runs as a separate CLI command or can be scheduled. For repos registered with `--url`, sync also fetches from the remote to keep the local clone current.
 
 ## Protocol
 
@@ -417,7 +417,7 @@ Any MCP host with stdio transport support can run commitmux. The minimum require
 
 **No credentials required or stored.** commitmux reads from your local git clones using libgit2. It does not authenticate to any remote. No tokens, passwords, or SSH keys are stored in the database or required at runtime.
 
-**No network access.** `commitmux serve` makes no outbound connections. All data comes from the local SQLite database. The ingest step (`commitmux sync`) also uses libgit2 against local repos only — it does not fetch from remotes.
+**No network access from the MCP server.** `commitmux serve` makes no outbound connections. All data comes from the local SQLite database. The ingest step (`commitmux sync`) reads from local git repos by default. The one exception: repos registered with `add-repo --url` are fetched from their remote during `sync` so that the local clone is kept current. No credentials are stored — SSH remotes use the SSH agent, and the fetch happens only when you run `sync`, never during a live agent session.
 
 **Bounded surface.** The agent can only call the four defined tools. It cannot run shell commands, access arbitrary files, or query repos that have not been registered with `add-repo`. The tool surface is fixed at compile time.
 
