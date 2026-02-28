@@ -431,6 +431,7 @@ impl Store for SqliteStore {
                 date,
                 matched_paths,
                 patch_excerpt,
+                score: None,
             });
         }
 
@@ -911,6 +912,7 @@ impl Store for SqliteStore {
                     date: row.get(4)?,
                     matched_paths: vec![],
                     patch_excerpt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                    score: Some(row.get::<_, f64>(6)? as f32),
                 })
             })?
             .collect();

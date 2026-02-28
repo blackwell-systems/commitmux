@@ -648,5 +648,73 @@ If verification fails, fix before proceeding.
 
 ## Status
 
-- [ ] Wave 1 Agent A — Fix six UX findings in `src/main.rs`: arg descriptions (R2-01, R2-02, R2-03), init-first hint (R2-04), libgit2 error suppression (R2-05), MCP tip on re-sync (R2-07)
-- [ ] Wave 1 Agent B — Add startup message to `crates/mcp/src/lib.rs` (R2-06)
+- [x] Wave 1 Agent A — Fix six UX findings in `src/main.rs`: arg descriptions (R2-01, R2-02, R2-03), init-first hint (R2-04), libgit2 error suppression (R2-05), MCP tip on re-sync (R2-07)
+- [x] Wave 1 Agent B — Add startup message to `crates/mcp/src/lib.rs` (R2-06)
+
+---
+
+### Agent B — Completion Report
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-b
+commit: 2ddb0e7
+files_changed:
+  - crates/mcp/src/lib.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_startup_message_string
+verification: PASS (cargo build, cargo clippy -- -D warnings, cargo test -p commitmux-mcp — 10/10 tests)
+```
+
+**Isolation note:** The worktree exists at `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave1-agent-b` on branch `wave1-agent-b`. The shell environment resets cwd between bash calls (per agent notes), but all operations used absolute paths — isolation was confirmed via direct `cd` and branch verification.
+
+**Changes made:**
+
+1. Added `eprintln!("commitmux MCP server ready (JSON-RPC over stdio). Ctrl+C to stop.");` immediately before the read loop in `McpServer::run_stdio()` in `/Users/dayna.blackwell/code/commitmux/crates/mcp/src/lib.rs` (line 46).
+
+2. Added `test_startup_message_string` test to the `#[cfg(test)]` module, verifying the message contains `"JSON-RPC over stdio"` and `"Ctrl+C"` and is non-empty.
+
+**Public API:** `run_mcp_server(store: Arc<dyn Store + 'static>) -> anyhow::Result<()>` is unchanged.
+
+---
+
+### Agent A — Completion Report
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-a
+commit: 7b36ef9
+files_changed:
+  - src/main.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_db_not_found_hint_message
+  - test_git2_error_suppressed
+  - test_mcp_tip_on_resync
+verification: PASS (cargo build, cargo clippy -- -D warnings, cargo test -p commitmux — 10/10 unit tests + 1/1 integration test)
+```
+
+**Isolation note:** Worktree confirmed at `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave1-agent-a` on branch `wave1-agent-a`. All file paths used absolute references throughout.
+
+**Changes made:**
+
+1. **R2-01 (Change 1):** Added `#[arg(help = "Name of the indexed repository (see 'commitmux status')")]` to the `name` field of `Commands::RemoveRepo`.
+
+2. **R2-01 (Change 2):** Added `#[arg(help = "Name of the indexed repository (see 'commitmux status')")]` to the `name` field of `Commands::UpdateRepo`.
+
+3. **R2-02 (Change 3):** Added `#[arg(help = "Name of the indexed repository (see 'commitmux status')")]` to the `repo` field of `Commands::Show`.
+
+4. **R2-03 (Change 4):** Updated the `path` field in `Commands::AddRepo` help from `"Local path to a git repository"` to `"Local path to a git repository (mutually exclusive with --url)"`.
+
+5. **R2-04 (Change 5):** Added `if !db_path.exists() { anyhow::bail!(...) }` check before `SqliteStore::open` in all seven affected command arms: `AddRepo`, `RemoveRepo`, `UpdateRepo`, `Sync`, `Show`, `Status`, `Serve`. `Init` is intentionally excluded.
+
+6. **R2-05 (Change 6):** Replaced `.with_context(|| ...)` with `.map_err(|_| anyhow::anyhow!(...))` on the `git2::Repository::open` call in the local-path branch of `Commands::AddRepo`, suppressing the libgit2 `Caused by:` error chain.
+
+7. **R2-07 (Change 7):** Replaced `total_indexed` with `total_in_index` (accumulating `commits_indexed + commits_already_indexed` per repo) and changed the tip condition from `total_indexed > 0` to `total_in_index > 0`. The tip now appears on re-sync when the index is non-empty even if no new commits were indexed.
+
+**Test notes:** The `test_git2_error_suppressed` test required `.map(|_| ())` to convert `Result<git2::Repository, _>` to `Result<(), _>` before `unwrap_err()`, since `git2::Repository` does not implement `Debug`.

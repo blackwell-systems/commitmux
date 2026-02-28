@@ -191,6 +191,8 @@ pub struct SearchResult {
     pub date: i64,
     pub matched_paths: Vec<String>,
     pub patch_excerpt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

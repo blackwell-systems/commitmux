@@ -1,99 +1,299 @@
 # Cold-Start UX Audit Prompt
 
 **Metadata:**
-- Audit Date: 2026-02-28 (Round 2 — post UX audit fixes)
-- Tool Version: commitmux 0.1.0
+- Audit Date: 2026-02-28 (Round 5 — verify R4 fixes, regression check)
+- Tool Version: commitmux 0.1.0 (post-Wave 1: commits bed85dd, d6c6bb6, 9a9c0fc, dd00fe8)
 - Sandbox mode: local
-- Sandbox: COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3
-- Environment: host (macOS)
+- Sandbox: COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3
+- Environment: host (macOS, Apple Silicon)
 
 ---
 
-You are performing a UX audit of `commitmux` — a tool that builds a cross-repo git history index for AI agents.
-You are acting as a **new user** encountering this tool for the first time.
+You are performing a UX audit of `commitmux` — a tool that builds a cross-repo git history index for AI agents, with keyword search (FTS5) and semantic vector search (embeddings via Ollama).
 
-You are running `commitmux` on the host with state isolated to a temp directory via env vars:
-`COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3`
-The tool's real data at `~/.commitmux/db.sqlite3` is unaffected.
+You are acting as a **new user** encountering this tool for the first time, specifically testing the semantic search feature after R4 fixes.
 
-Run all commands using: `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`
+**Ollama is running** on this machine with `nomic-embed-text:latest` available. This is Round 5, verifying that R4 fixes work correctly:
 
-For brevity, the audit areas below write this as: `commitmux` — but every command MUST be prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`.
+**R4 fixes to verify:**
+1. **R4-01 (CRITICAL):** Semantic search SQL bug fixed—should return results now (commits d6c6bb6, aef795f)
+2. **R4-02:** Help text improvements—setup guidance added (commit dd00fe8)
+3. **R4-03:** Status display—shows `✓` (complete), `⋯` (pending), `-` (disabled) (commit bed85dd)
+4. **R4-04, R4-05:** Input validation—rejects empty query, limit=0, nonexistent repos (commit 9a9c0fc)
+5. **Regression check:** Ensure R3 fixes still work, no new issues introduced
+
+State is isolated to a temp directory:
+`COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3`
+
+The tool's real production data is unaffected.
+
+**IMPORTANT:** `commitmux` is installed at `~/.cargo/bin/commitmux`. Run ALL commitmux commands as:
+```
+env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux <subcommand>
+```
+
+Shorthand used in this prompt: `CM` = `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux`
+
+---
 
 ## Audit Areas
 
-### 1. Discovery
+### Area 1: Ollama Readiness
 
-- `commitmux --help` — read top-level help: is the description clear? are subcommands listed with descriptions?
-- `commitmux init --help`
-- `commitmux add-repo --help`
-- `commitmux remove-repo --help`
-- `commitmux update-repo --help`
-- `commitmux sync --help`
-- `commitmux show --help`
-- `commitmux status --help`
-- `commitmux serve --help`
+Before touching commitmux, verify the embedding backend:
 
-Note: does each subcommand have a description in the top-level `--help`? Are flag descriptions present or blank?
+```bash
+ollama list
+curl -s http://localhost:11434/v1/models
+```
 
-### 2. Setup / Onboarding
+Note: which models are available, whether `nomic-embed-text` is listed, and whether the API responds.
 
-- `commitmux init` — initialize the database. What output does the user see? Is the path shown?
-- `commitmux status` — before any repos are added. What does an empty index look like?
-- `commitmux init` again — what happens on second run? Is it idempotent and clear?
+---
 
-### 3. Core Feature — Add a repo and sync
+### Area 2: Discovery — Embedding-Relevant Help Text
 
-- `commitmux add-repo /tmp` — add a local path (use /tmp as it exists but is not a git repo). What error does the user see?
-- `commitmux add-repo /var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ` — add the temp dir (not a git repo). Error message quality?
-- Find a real git repo to add: `ls ~/code/ | head -5` then pick one
-- `commitmux add-repo ~/code/<repo>` — add a real local git repo. What output is shown?
-- `commitmux status` — after adding. Is the repo listed? What info is shown?
-- `commitmux sync` — sync all repos. Progress output? Duration? Counts?
-- `commitmux sync --repo <name>` — sync a single repo.
-- `commitmux status` — after sync. Are commit counts and last-synced timestamps shown?
+Check the help text a new user would read before enabling embeddings:
 
-### 4. Data / Tracking
+```bash
+CM --help
+CM config --help
+CM config set --help
+CM config get --help
+CM add-repo --help
+CM sync --help
+```
 
-- `commitmux show <repo> <sha>` — use a real SHA from the synced repo. Is output readable? Format?
-- `commitmux show <repo> abc123` — short SHA. Does prefix matching work?
-- `commitmux show <repo> zzz` — nonexistent SHA. Error message quality?
+Note: Is it clear how to enable semantic search? Does help text explain the Ollama dependency? Would a new user know to run `config set embed.model` before `add-repo --embed`?
 
-### 5. Add repo with flags
+---
 
-- `commitmux add-repo ~/code/<repo2> --name custom-name` — custom name. Confirm in status.
-- `commitmux add-repo ~/code/<repo> --exclude vendor/` — exclude prefix. No confirmation of what was excluded?
-- `commitmux update-repo <name> --author user@example.com` — update author filter.
-- `commitmux status` — does the display reflect any of the metadata set above?
+### Area 3: Setup — Init and Embedding Configuration
 
-### 6. Destructive / Write Operations
+```bash
+CM init
+CM config get embed.model
+CM config get embed.endpoint
+CM config set embed.model nomic-embed-text
+CM config set embed.endpoint http://localhost:11434/v1
+CM config get embed.model
+CM config get embed.endpoint
+```
 
-- `commitmux remove-repo nonexistent` — remove a repo that doesn't exist. Error quality?
-- `commitmux remove-repo <name>` — remove a real repo. Output? Confirmation prompt?
-- `commitmux status` — confirm removal is reflected.
+Note the output at each step. Does `(not set)` clearly communicate what needs to be done?
 
-### 7. Edge Cases
+---
 
-- `commitmux` — no subcommand. What does the user see?
-- `commitmux blorp` — unknown subcommand. Error message?
-- `commitmux add-repo` — no path and no --url. Error message?
-- `commitmux show` — missing required args. Error message?
-- `commitmux sync --repo nonexistent` — sync a repo name that doesn't exist.
-- `commitmux add-repo --url not-a-url` — invalid URL. How does it fail?
+### Area 4: Add Repos and Generate Embeddings
 
-### 8. Output Review
+Add two repos — one with embeddings enabled, one without:
 
-- Re-run `commitmux status` after a full sync and evaluate:
-  - Column alignment and header clarity
-  - Whether "LAST SYNCED" timestamps are human-readable
-  - Whether units are clear (commits indexed, commits skipped)
-  - Terminology consistency: "repo" vs "repository" across subcommands
-  - Whether the tool has any color output or is plain text
+```bash
+CM add-repo /Users/dayna.blackwell/code/commitmux --embed
+CM add-repo /Users/dayna.blackwell/code/bubbletea-components
+CM status
+```
 
-### 9. MCP / Serve
+Then sync both:
 
-- `commitmux serve` — start the MCP server. Does it print anything? Does it block? Send Ctrl+C after 2 seconds and note behavior.
-- Note: this is the primary value proposition. Is there any onboarding text pointing users toward the MCP interface?
+```bash
+CM sync
+```
+
+Carefully observe the sync output:
+- Does it show embedding progress separately from commit indexing?
+- Does it report how many commits were embedded?
+- Is there any indication when embedding is slow?
+
+Check status after sync:
+
+```bash
+CM status
+```
+
+Note: Does the EMBED column correctly show `✓` for commitmux and `-` for bubbletea-components? Is the footer clear?
+
+---
+
+### Area 5: Verify Embeddings Were Generated
+
+```bash
+CM show commitmux $(CM sync --repo commitmux 2>&1 | head -1 || echo "")
+```
+
+Actually, get a specific SHA to look up:
+
+```bash
+CM sync --repo commitmux
+```
+
+Then pick a known recent SHA and verify it exists:
+
+```bash
+CM show commitmux 9768e91
+```
+
+Also run a keyword search to confirm indexing worked:
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search","arguments":{"query":"embedding","limit":3}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+Note: Does `commitmux serve` print a startup message to stderr? Does it correctly shut down when stdin closes?
+
+---
+
+### Area 6: commitmux_search_semantic — Core Feature
+
+This is the main focus of R4. Test semantic search with several queries via MCP JSON-RPC:
+
+**Query 1: Conceptual match (should find embedding/vector commits)**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"adding vector search and natural language queries","limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+**Query 2: Infrastructure/setup (should find init, schema, database commits)**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"database schema initialization and setup","limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+**Query 3: Bug fix / error handling (should find fix commits)**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"fixing error handling and improving user feedback messages","limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+**Query 4: Very low relevance (should return empty or low-score results)**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"kubernetes cluster autoscaling and pod scheduling","limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+**Query 5: With repo filter**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"animation and UI components","repos":["bubbletea-components"],"limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+Note: The `repos` filter restricts to `bubbletea-components`, which has **no embeddings**. Observe what happens — does the tool return an empty result set, an error, or silently ignore the filter and search all repos?
+
+**Query 6: Limit=1**
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"git repository indexing","limit":1}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+For each query, evaluate:
+- Are the top results semantically relevant to the query?
+- Are `score` values present in the output? Are they in a sensible range (0–1)?
+- Is the result format consistent with `commitmux_search` output?
+- Is the response time reasonable (subjectively)?
+
+---
+
+### Area 7: tools/list — Verify commitmux_search_semantic Is Exposed
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+Note: Is `commitmux_search_semantic` listed? Is its description accurate and helpful? Does it explain that it requires embeddings to be enabled per-repo? Does it mention Ollama as the dependency?
+
+---
+
+### Area 8: Semantic Search on Repo Without Embeddings
+
+Enable embeddings on bubbletea-components without syncing embeddings, then search it:
+
+```bash
+CM update-repo bubbletea-components --embed
+CM status
+```
+
+Now search — note that bubbletea-components has no embeddings yet (sync was done before --embed was set):
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"bubble tea components and UI","repos":["bubbletea-components"],"limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+Note: What does the user see when a repo has embed_enabled=true but no embeddings have been generated yet? Empty results? An error? A hint to run `sync --embed-only`?
+
+Then backfill embeddings and search again:
+
+```bash
+CM sync --embed-only --repo bubbletea-components
+CM status
+```
+
+Search again after backfill — do results now appear?
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"bubble tea UI components","limit":5}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+---
+
+### Area 9: commitmux_search_semantic — Missing Required Argument
+
+```bash
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+Note: Is the error message clear when `query` is missing? Does it include `isError: true` in the JSON-RPC response?
+
+---
+
+### Area 10: Embed-Only Sync — Output and Progress
+
+Add a third repo without --embed to test the embed-only flow:
+
+```bash
+CM add-repo /Users/dayna.blackwell/code/scout-and-wave
+CM sync --repo scout-and-wave
+CM update-repo scout-and-wave --embed
+CM sync --embed-only --repo scout-and-wave
+```
+
+Carefully observe:
+- Does the embed-only sync output differ from regular sync output?
+- Is there a progress indicator showing how many commits are being embedded?
+- Is there a final count ("Embedded X commits, Y failed")?
+- Does the status update after embed-only sync completes?
+
+```bash
+CM status
+```
+
+---
+
+### Area 11: Output Format Review
+
+For each `commitmux_search_semantic` result, evaluate the output structure:
+
+- Are `repo`, `sha`, `subject`, `author`, `date`, `score` all present?
+- Is `score` a float between 0 and 1?
+- Is `patch_excerpt` included? If so, is it truncated appropriately?
+- Is the JSON well-formed and parseable?
+- Compare the output schema to `commitmux_search` — are they consistent?
+
+---
+
+### Area 12: Edge Cases
+
+```bash
+# Search with empty string query
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":""}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+
+# Search with limit=0
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"test","limit":0}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+
+# Search with nonexistent repo filter
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"test","repos":["nonexistent-repo"]}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+
+# Search with since timestamp (far future — should return empty)
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"audit","version":"1.0"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}\n{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"commitmux_search_semantic","arguments":{"query":"embedding","since":9999999999}}}\n' | env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.ZX12lOOrXD/db.sqlite3 ~/.cargo/bin/commitmux serve
+```
+
+---
+
+Run ALL areas. Do not skip any.
+Note exact output, errors, exit codes, and behavior at each step.
 
 ## Findings Format
 
@@ -110,11 +310,11 @@ Severity guide:
 - **UX-improvement**: Confusing or unhelpful behavior that a user would notice and dislike
 - **UX-polish**: Minor friction, inconsistency, or missed opportunity for clarity
 
+Also note **positive observations** — things that worked well or exceeded expectations.
+
 ## Report
 
 - Group findings by area
 - Include a summary table at the top: total count by severity
-- Write the complete report to `/Users/dayna.blackwell/code/commitmux/docs/cold-start-audit.md` using the Write tool
-
-IMPORTANT: Run ALL commands prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`.
-Do not bypass the sandbox — do not run commitmux without the COMMITMUX_DB env var.
+- Note R3 regression check: verify R3 findings are still fixed (PATH note in help, config set validation, serve startup message, --embed/--no-embed conflict error)
+- Write the complete report to `docs/cold-start-audit.md` using the Write tool
