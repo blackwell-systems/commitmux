@@ -40,6 +40,8 @@ impl McpServer {
         let stdout = std::io::stdout();
         let mut out = std::io::BufWriter::new(stdout.lock());
 
+        eprintln!("commitmux MCP server ready (JSON-RPC over stdio). Ctrl+C to stop.");
+
         for line in stdin.lock().lines() {
             let line = line?;
             if line.trim().is_empty() {
@@ -632,5 +634,13 @@ mod tests {
         assert_eq!(arr.len(), 2);
         assert_eq!(arr[0]["name"].as_str().unwrap(), "repo-alpha");
         assert_eq!(arr[0]["commit_count"].as_u64().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_startup_message_string() {
+        let msg = "commitmux MCP server ready (JSON-RPC over stdio). Ctrl+C to stop.";
+        assert!(msg.contains("JSON-RPC over stdio"), "startup message should mention transport");
+        assert!(msg.contains("Ctrl+C"), "startup message should mention how to stop");
+        assert!(!msg.is_empty());
     }
 }
