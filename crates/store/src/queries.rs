@@ -875,15 +875,20 @@ impl Store for SqliteStore {
             .unwrap_or_else(|| "[]".into());
         let since = opts.since.unwrap_or(0);
 
+        // For sqlite-vec, k must be specified in WHERE clause with MATCH
+        // Filters are applied post-kNN by wrapping in a subquery
         let sql =
-            "SELECT ce.repo_name, ce.sha, ce.subject, ce.author_name, ce.author_time,
-                    ce.patch_preview, distance
-             FROM commit_embeddings ce
-             WHERE ce.embedding MATCH ?1
-               AND k = ?2
-               AND ('' = ?3 OR ce.repo_name IN (SELECT value FROM json_each(?3)))
-               AND (?4 = 0 OR ce.author_time >= ?4)
-             ORDER BY distance";
+            "SELECT repo_name, sha, subject, author_name, author_time, patch_excerpt, distance
+             FROM (
+               SELECT ce.repo_name, ce.sha, ce.subject, ce.author_name, ce.author_time,
+                      ce.patch_preview as patch_excerpt, distance
+               FROM commit_embeddings ce
+               WHERE ce.embedding MATCH ?1
+                 AND k = ?2
+               ORDER BY distance
+             )
+             WHERE ('[]' = ?3 OR repo_name IN (SELECT value FROM json_each(?3)))
+               AND (?4 = 0 OR author_time >= ?4)";
 
         let mut stmt = conn.prepare(sql)?;
         let results: rusqlite::Result<Vec<SearchResult>> = stmt
@@ -1007,5 +1012,140 @@ mod tests {
         // 2026-02-28T15:34:55Z = 1772234095
         // Verify a known timestamp: 2000-01-01T00:00:00Z = 946684800
         assert_eq!(format_iso_date(946684800), "2000-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_search_semantic_returns_results() {
+        let store = make_store();
+        let mut repo_input = make_repo_input("semantic-test-repo");
+        repo_input.embed_enabled = true;
+        let repo = store.add_repo(&repo_input).expect("add repo");
+
+        // Insert a commit
+        let commit = make_commit(repo.repo_id, "abc123def456", "Add semantic search feature", 1700000000);
+        store.upsert_commit(&commit).expect("upsert commit");
+
+        // Store an embedding with a test vector
+        let embedding = vec![0.1; 768];
+        store.store_embedding(
+            repo.repo_id,
+            "abc123def456",
+            "Add semantic search feature",
+            "Test Author",
+            "semantic-test-repo",
+            1700000000,
+            Some("patch preview text"),
+            &embedding,
+        ).expect("store embedding");
+
+        // Query with a similar vector
+        let query_embedding = vec![0.1; 768];
+        let opts = SemanticSearchOpts {
+            limit: Some(10),
+            repos: None,
+            since: None,
+        };
+        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+
+        assert!(results.len() > 0, "expected at least 1 result from semantic search");
+        assert_eq!(results[0].sha, "abc123def456");
+        assert_eq!(results[0].repo, "semantic-test-repo");
+    }
+
+    #[test]
+    fn test_search_semantic_limit_respected() {
+        let store = make_store();
+        let mut repo_input = make_repo_input("limit-test-repo");
+        repo_input.embed_enabled = true;
+        let repo = store.add_repo(&repo_input).expect("add repo");
+
+        // Insert 5 commits with embeddings
+        for i in 0..5 {
+            let sha = format!("sha{:016x}", i);
+            let subject = format!("Commit {}", i);
+            let commit = make_commit(repo.repo_id, &sha, &subject, 1700000000 + i);
+            store.upsert_commit(&commit).expect("upsert commit");
+
+            let embedding = vec![0.1 + (i as f32 * 0.01); 768];
+            store.store_embedding(
+                repo.repo_id,
+                &sha,
+                &subject,
+                "Test Author",
+                "limit-test-repo",
+                1700000000 + i,
+                Some("patch preview"),
+                &embedding,
+            ).expect("store embedding");
+        }
+
+        // Query with limit=2
+        let query_embedding = vec![0.1; 768];
+        let opts = SemanticSearchOpts {
+            limit: Some(2),
+            repos: None,
+            since: None,
+        };
+        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+
+        assert_eq!(results.len(), 2, "expected exactly 2 results when limit=2");
+    }
+
+    #[test]
+    fn test_search_semantic_repo_filter() {
+        let store = make_store();
+
+        // Create two repos
+        let mut repo1_input = make_repo_input("repo-one");
+        repo1_input.embed_enabled = true;
+        let repo1 = store.add_repo(&repo1_input).expect("add repo1");
+
+        let mut repo2_input = make_repo_input("repo-two");
+        repo2_input.embed_enabled = true;
+        let repo2 = store.add_repo(&repo2_input).expect("add repo2");
+
+        // Insert commit + embedding for repo1
+        let commit1 = make_commit(repo1.repo_id, "repo1sha000000001", "Repo 1 commit", 1700000000);
+        store.upsert_commit(&commit1).expect("upsert commit1");
+        let embedding1 = vec![0.1; 768];
+        store.store_embedding(
+            repo1.repo_id,
+            "repo1sha000000001",
+            "Repo 1 commit",
+            "Test Author",
+            "repo-one",
+            1700000000,
+            Some("patch1"),
+            &embedding1,
+        ).expect("store embedding1");
+
+        // Insert commit + embedding for repo2
+        let commit2 = make_commit(repo2.repo_id, "repo2sha000000002", "Repo 2 commit", 1700000001);
+        store.upsert_commit(&commit2).expect("upsert commit2");
+        let embedding2 = vec![0.1; 768];
+        store.store_embedding(
+            repo2.repo_id,
+            "repo2sha000000002",
+            "Repo 2 commit",
+            "Test Author",
+            "repo-two",
+            1700000001,
+            Some("patch2"),
+            &embedding2,
+        ).expect("store embedding2");
+
+        // Query with repo filter for repo-one
+        let query_embedding = vec![0.1; 768];
+        let opts = SemanticSearchOpts {
+            limit: Some(10),
+            repos: Some(vec!["repo-one".to_string()]),
+            since: None,
+        };
+        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+
+        assert!(results.len() > 0, "expected at least 1 result");
+        for result in &results {
+            assert_eq!(result.repo, "repo-one", "all results should be from repo-one");
+        }
     }
 }
