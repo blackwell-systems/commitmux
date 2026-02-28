@@ -1,10 +1,10 @@
 # Cold-Start UX Audit Prompt
 
 **Metadata:**
-- Audit Date: 2026-02-28
-- Tool Version: commitmux (no --version flag)
+- Audit Date: 2026-02-28 (Round 2 — post UX audit fixes)
+- Tool Version: commitmux 0.1.0
 - Sandbox mode: local
-- Sandbox: COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR/db.sqlite3
+- Sandbox: COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3
 - Environment: host (macOS)
 
 ---
@@ -13,12 +13,12 @@ You are performing a UX audit of `commitmux` — a tool that builds a cross-repo
 You are acting as a **new user** encountering this tool for the first time.
 
 You are running `commitmux` on the host with state isolated to a temp directory via env vars:
-`COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR/db.sqlite3`
+`COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3`
 The tool's real data at `~/.commitmux/db.sqlite3` is unaffected.
 
-Run all commands using: `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR/db.sqlite3 ~/.cargo/bin/commitmux`
+Run all commands using: `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`
 
-For brevity, the audit areas below write this as: `commitmux` — but every command MUST be prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR/db.sqlite3 ~/.cargo/bin/commitmux`.
+For brevity, the audit areas below write this as: `commitmux` — but every command MUST be prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`.
 
 ## Audit Areas
 
@@ -45,7 +45,7 @@ Note: does each subcommand have a description in the top-level `--help`? Are fla
 ### 3. Core Feature — Add a repo and sync
 
 - `commitmux add-repo /tmp` — add a local path (use /tmp as it exists but is not a git repo). What error does the user see?
-- `commitmux add-repo /var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR` — add the temp dir (not a git repo). Error message quality?
+- `commitmux add-repo /var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ` — add the temp dir (not a git repo). Error message quality?
 - Find a real git repo to add: `ls ~/code/ | head -5` then pick one
 - `commitmux add-repo ~/code/<repo>` — add a real local git repo. What output is shown?
 - `commitmux status` — after adding. Is the repo listed? What info is shown?
@@ -116,5 +116,5 @@ Severity guide:
 - Include a summary table at the top: total count by severity
 - Write the complete report to `/Users/dayna.blackwell/code/commitmux/docs/cold-start-audit.md` using the Write tool
 
-IMPORTANT: Run ALL commands prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.w5JNXOXLkR/db.sqlite3 ~/.cargo/bin/commitmux`.
+IMPORTANT: Run ALL commands prefixed with `env COMMITMUX_DB=/var/folders/3z/jbjrfl4578z013f8fdh5w0tr0000gp/T/tmp.71XKj2V8lZ/db.sqlite3 ~/.cargo/bin/commitmux`.
 Do not bypass the sandbox — do not run commitmux without the COMMITMUX_DB env var.
