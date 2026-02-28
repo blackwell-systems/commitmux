@@ -922,12 +922,63 @@ Both progress indicators require refactoring the batch loop in `crates/embed/src
 ## Agent Completion Reports
 
 ### Agent A — Completion Report
-(Agent A will append their report here after completing their work)
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-a
+commit: aef795f037e4e51582160373828f04af9016d735
+files_changed:
+  - crates/store/src/queries.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_search_semantic_returns_results
+  - test_search_semantic_limit_respected
+  - test_search_semantic_repo_filter
+verification: PASS (cargo test --package commitmux-store — 3/3 new tests, 73 total workspace tests)
+```
+
+**Implementation notes:**
+
+The original SQL query had `AND k = ?2` in the WHERE clause, which is correct sqlite-vec syntax, but the issue was with the filter logic. The fix involved:
+
+1. Wrapping the kNN query in a subquery to separate the vector search from post-filtering
+2. Fixing the repos filter condition from `'' = ?3` to `'[]' = ?3` to properly handle the case when no repo filter is specified (repos_json is '[]')
+3. The `k = ?2` parameter is required by sqlite-vec for vec0 virtual tables and must remain in the inner WHERE clause with the MATCH
+
+The corrected query structure:
+```sql
+SELECT ... FROM (
+  SELECT ... FROM commit_embeddings ce
+  WHERE ce.embedding MATCH ?1 AND k = ?2
+  ORDER BY distance
+)
+WHERE ('[]' = ?3 OR repo_name IN (SELECT value FROM json_each(?3)))
+  AND (?4 = 0 OR author_time >= ?4)
+```
+
+All 3 new tests pass, verifying:
+- Basic semantic search returns results
+- Limit parameter is respected
+- Repo filter works correctly
 
 ---
 
 ### Agent B — Completion Report
-(Agent B will append their report here after completing their work)
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-b
+commit: d5b9e71
+files_changed:
+  - src/main.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added: []
+verification: PASS (cargo test --workspace — 70/70 tests)
+```
 
 ---
 
@@ -937,7 +988,22 @@ Both progress indicators require refactoring the batch loop in `crates/embed/src
 ---
 
 ### Agent D — Completion Report
-(Agent D will append their report here after completing their work)
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-d
+commit: d85cf0d85e133940cd837dff8993836c221e08dd
+files_changed:
+  - crates/mcp/src/lib.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_search_semantic_rejects_empty_query
+  - test_search_semantic_rejects_limit_zero
+  - test_search_semantic_rejects_nonexistent_repo
+verification: PASS (cargo test --workspace — 70/70 tests, 3 new tests pass)
+```
 
 ---
 
