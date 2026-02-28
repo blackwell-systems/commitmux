@@ -34,6 +34,10 @@ pub struct GetPatchInput {
     pub max_bytes: Option<usize>,
 }
 
+/// Input type for the `commitmux_list_repos` tool (no required fields).
+#[derive(Debug, Deserialize, Default)]
+pub struct ListReposInput {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

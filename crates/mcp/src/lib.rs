@@ -13,6 +13,9 @@ use std::sync::Arc;
 use commitmux_types::{SearchOpts, Store, TouchOpts};
 use serde_json::{json, Value};
 use tools::{GetCommitInput, GetPatchInput, SearchInput, TouchesInput};
+// ListReposInput is defined in tools.rs for API consistency but has no fields to parse
+#[allow(unused_imports)]
+use tools::ListReposInput;
 
 /// Run the MCP server, blocking until stdin is closed.
 ///
@@ -166,6 +169,14 @@ impl McpServer {
                             },
                             "required": ["repo", "sha"]
                         }
+                    },
+                    {
+                        "name": "commitmux_list_repos",
+                        "description": "Returns the list of indexed repos with name, commit count, and last synced timestamp (Unix seconds)",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {}
+                        }
                     }
                 ]
             }
@@ -184,6 +195,7 @@ impl McpServer {
             "commitmux_touches" => self.call_touches(&arguments),
             "commitmux_get_commit" => self.call_get_commit(&arguments),
             "commitmux_get_patch" => self.call_get_patch(&arguments),
+            "commitmux_list_repos" => self.call_list_repos(&arguments),
             other => Err(format!("Unknown tool: {other}")),
         };
 
@@ -256,6 +268,15 @@ impl McpServer {
                     format!("Commit {}:{} not found", input.repo, input.sha)
                 })?;
                 serde_json::to_string(&result).map_err(|e| e.to_string())
+            })
+    }
+
+    fn call_list_repos(&self, _arguments: &Value) -> Result<String, String> {
+        self.store
+            .list_repos_with_stats()
+            .map_err(|e| e.to_string())
+            .and_then(|entries| {
+                serde_json::to_string(&entries).map_err(|e| e.to_string())
             })
     }
 
@@ -400,6 +421,41 @@ mod tests {
         McpServer::new(Arc::new(StubStore))
     }
 
+    struct StubStoreWithRepos;
+
+    impl Store for StubStoreWithRepos {
+        fn list_repos_with_stats(&self) -> StoreResult<Vec<RepoListEntry>> {
+            Ok(vec![
+                RepoListEntry {
+                    name: "repo-alpha".into(),
+                    commit_count: 42,
+                    last_synced_at: Some(1700000000),
+                },
+                RepoListEntry {
+                    name: "repo-beta".into(),
+                    commit_count: 7,
+                    last_synced_at: None,
+                },
+            ])
+        }
+        fn add_repo(&self, _: &RepoInput) -> StoreResult<Repo> { unimplemented!() }
+        fn list_repos(&self) -> StoreResult<Vec<Repo>> { unimplemented!() }
+        fn get_repo_by_name(&self, _: &str) -> StoreResult<Option<Repo>> { unimplemented!() }
+        fn remove_repo(&self, _: &str) -> StoreResult<()> { unimplemented!() }
+        fn commit_exists(&self, _: i64, _: &str) -> StoreResult<bool> { unimplemented!() }
+        fn update_repo(&self, _: i64, _: &RepoUpdate) -> StoreResult<Repo> { unimplemented!() }
+        fn upsert_commit(&self, _: &Commit) -> StoreResult<()> { unimplemented!() }
+        fn upsert_commit_files(&self, _: &[CommitFile]) -> StoreResult<()> { unimplemented!() }
+        fn upsert_patch(&self, _: &CommitPatch) -> StoreResult<()> { unimplemented!() }
+        fn get_ingest_state(&self, _: i64) -> StoreResult<Option<IngestState>> { unimplemented!() }
+        fn update_ingest_state(&self, _: &IngestState) -> StoreResult<()> { unimplemented!() }
+        fn search(&self, _: &str, _: &SearchOpts) -> StoreResult<Vec<SearchResult>> { unimplemented!() }
+        fn touches(&self, _: &str, _: &TouchOpts) -> StoreResult<Vec<TouchResult>> { unimplemented!() }
+        fn get_commit(&self, _: &str, _: &str) -> StoreResult<Option<CommitDetail>> { unimplemented!() }
+        fn get_patch(&self, _: &str, _: &str, _: Option<usize>) -> StoreResult<Option<PatchResult>> { unimplemented!() }
+        fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> { unimplemented!() }
+    }
+
     #[test]
     fn test_tools_list_response() {
         let server = make_server();
@@ -435,7 +491,7 @@ mod tests {
             tool_names.contains(&"commitmux_get_patch"),
             "missing commitmux_get_patch"
         );
-        assert_eq!(tool_names.len(), 4, "must have exactly 4 tools");
+        assert_eq!(tool_names.len(), 5, "must have exactly 5 tools");
     }
 
     #[test]
@@ -516,5 +572,60 @@ mod tests {
 
         // Not found => isError: true
         assert_eq!(response["result"]["isError"], true);
+    }
+
+    #[test]
+    fn test_tools_list_includes_list_repos() {
+        let server = make_server();
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let response_str = server
+            .handle_message(request)
+            .expect("tools/list must produce a response");
+        let response: Value =
+            serde_json::from_str(&response_str).expect("response must be valid JSON");
+
+        let tools = response["result"]["tools"]
+            .as_array()
+            .expect("result.tools must be an array");
+
+        let tool_names: Vec<&str> = tools
+            .iter()
+            .filter_map(|t| t["name"].as_str())
+            .collect();
+
+        assert!(
+            tool_names.contains(&"commitmux_list_repos"),
+            "missing commitmux_list_repos"
+        );
+    }
+
+    #[test]
+    fn test_tools_call_list_repos() {
+        let server = McpServer::new(Arc::new(StubStoreWithRepos));
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_list_repos",
+                "arguments": {}
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(response["result"]["isError"], false);
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        let entries: Value = serde_json::from_str(text).expect("entries must be JSON");
+        let arr = entries.as_array().expect("must be an array");
+        assert_eq!(arr.len(), 2);
+        assert_eq!(arr[0]["name"].as_str().unwrap(), "repo-alpha");
+        assert_eq!(arr[0]["commit_count"].as_u64().unwrap(), 42);
     }
 }
