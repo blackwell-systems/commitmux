@@ -157,7 +157,7 @@ The `paths` filter is applied after FTS matching. Only commits that touched at l
     "repo": "api-server",
     "sha": "a3f9c12b4e77d831290ab45c6de1f8e3",
     "subject": "Add token bucket rate limiter to middleware stack",
-    "author": "Dana Blackwell",
+    "author": "Dayna Blackwell",
     "date": 1740700997,
     "matched_paths": [
       "src/middleware/mod.rs",
@@ -266,7 +266,7 @@ The `sha` is matched exactly as stored. Use the full SHA from a `search` or `tou
   "sha": "a3f9c12b4e77d831290ab45c6de1f8e3",
   "subject": "Add token bucket rate limiter to middleware stack",
   "body": "Fixes #482. Uses a per-IP token bucket with a 100 req/min default.\nBucket capacity and refill rate are configurable via environment variables.\n\nCo-authored-by: Jordan Lee <jordan@example.com>",
-  "author": "Dana Blackwell",
+  "author": "Dayna Blackwell",
   "date": 1740700997,
   "changed_files": [
     { "path": "src/middleware/mod.rs",      "status": "M", "old_path": null },

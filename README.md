@@ -161,7 +161,7 @@ Full-text search over commit subjects, bodies, and patch previews (first 500 cha
     "repo": "api-server",
     "sha": "a3f9c12b4e77d",
     "subject": "Add token bucket rate limiter to middleware stack",
-    "author": "Dana Blackwell",
+    "author": "Dayna Blackwell",
     "date": 1740700997,
     "matched_paths": ["src/middleware/rate_limit.rs", "src/middleware/mod.rs"],
     "patch_excerpt": "diff --git a/src/middleware/rate_limit.rs b/src/middleware/rate_limit.rs\nnew file mode 100644\n+use std::sync::Arc;\n+use tokio::sync::Semaphore;"
@@ -250,7 +250,7 @@ Retrieve full metadata for a specific commit, including the list of changed file
   "sha": "a3f9c12b4e77d831290ab45c6de1f8e3",
   "subject": "Add token bucket rate limiter to middleware stack",
   "body": "Fixes #482. Uses a per-IP token bucket with a 100 req/min default.\nBucket capacity and refill rate are configurable via environment variables.",
-  "author": "Dana Blackwell",
+  "author": "Dayna Blackwell",
   "date": 1740700997,
   "changed_files": [
     { "path": "src/middleware/rate_limit.rs", "status": "A", "old_path": null },
