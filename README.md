@@ -24,7 +24,18 @@ commitmux is a third option. It builds a read-optimized local index over your co
 ```sh
 # 1. Build and install
 cargo install --path .
+```
 
+After installing, ensure `~/.cargo/bin` is on your PATH:
+
+```sh
+# Add to your shell profile (~/.zshrc, ~/.bashrc, etc.)
+source "$HOME/.cargo/env"
+```
+
+Or add `export PATH="$HOME/.cargo/bin:$PATH"` to your shell profile directly.
+
+```sh
 # 2. Create the database
 commitmux init
 
