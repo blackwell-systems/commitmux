@@ -1,0 +1,253 @@
+mod patch;
+mod walker;
+
+pub use walker::Git2Ingester;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commitmux_types::{
+        CommitDetail, CommitFile, CommitPatch, IgnoreConfig, IngestState,
+        Ingester, PatchResult, Repo, RepoInput, RepoStats, Result, SearchOpts,
+        SearchResult, Store, TouchOpts, TouchResult,
+    };
+    use std::sync::Mutex;
+
+    // ── MockStore ────────────────────────────────────────────────────────────
+
+    struct MockStore {
+        commits: Mutex<Vec<commitmux_types::Commit>>,
+        files: Mutex<Vec<CommitFile>>,
+        patches: Mutex<Vec<CommitPatch>>,
+        ingest_state: Mutex<Option<IngestState>>,
+    }
+
+    impl MockStore {
+        fn new() -> Self {
+            MockStore {
+                commits: Mutex::new(Vec::new()),
+                files: Mutex::new(Vec::new()),
+                patches: Mutex::new(Vec::new()),
+                ingest_state: Mutex::new(None),
+            }
+        }
+    }
+
+    impl Store for MockStore {
+        fn add_repo(&self, _input: &RepoInput) -> Result<Repo> {
+            unimplemented!()
+        }
+
+        fn list_repos(&self) -> Result<Vec<Repo>> {
+            unimplemented!()
+        }
+
+        fn get_repo_by_name(&self, _name: &str) -> Result<Option<Repo>> {
+            unimplemented!()
+        }
+
+        fn upsert_commit(&self, commit: &commitmux_types::Commit) -> Result<()> {
+            self.commits.lock().unwrap().push(commit.clone());
+            Ok(())
+        }
+
+        fn upsert_commit_files(&self, files: &[CommitFile]) -> Result<()> {
+            self.files.lock().unwrap().extend_from_slice(files);
+            Ok(())
+        }
+
+        fn upsert_patch(&self, patch: &CommitPatch) -> Result<()> {
+            self.patches.lock().unwrap().push(patch.clone());
+            Ok(())
+        }
+
+        fn get_ingest_state(&self, _repo_id: i64) -> Result<Option<IngestState>> {
+            Ok(self.ingest_state.lock().unwrap().clone())
+        }
+
+        fn update_ingest_state(&self, state: &IngestState) -> Result<()> {
+            *self.ingest_state.lock().unwrap() = Some(state.clone());
+            Ok(())
+        }
+
+        fn search(&self, _query: &str, _opts: &SearchOpts) -> Result<Vec<SearchResult>> {
+            unimplemented!()
+        }
+
+        fn touches(&self, _path_glob: &str, _opts: &TouchOpts) -> Result<Vec<TouchResult>> {
+            unimplemented!()
+        }
+
+        fn get_commit(
+            &self,
+            _repo_name: &str,
+            _sha: &str,
+        ) -> Result<Option<CommitDetail>> {
+            unimplemented!()
+        }
+
+        fn get_patch(
+            &self,
+            _repo_name: &str,
+            _sha: &str,
+            _max_bytes: Option<usize>,
+        ) -> Result<Option<PatchResult>> {
+            unimplemented!()
+        }
+
+        fn repo_stats(&self, _repo_id: i64) -> Result<RepoStats> {
+            unimplemented!()
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    fn make_repo(path: &std::path::Path) -> Repo {
+        Repo {
+            repo_id: 1,
+            name: "test-repo".into(),
+            local_path: path.to_path_buf(),
+            remote_url: None,
+            default_branch: None,
+        }
+    }
+
+    fn default_config() -> IgnoreConfig {
+        IgnoreConfig {
+            path_prefixes: vec!["node_modules/".into()],
+            max_patch_bytes: 1_048_576,
+        }
+    }
+
+    // ── Tests ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sync_empty_repo() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let _git_repo = git2::Repository::init(dir.path()).expect("git init");
+        // An empty repo has no commits, no HEAD — sync_repo should handle gracefully.
+        // Actually, with no commits, head() will fail. The ingester should return
+        // an error or empty summary. Let's check what happens.
+        let store = MockStore::new();
+        let repo = make_repo(dir.path());
+        let config = default_config();
+
+        // An empty repo has no HEAD. The ingester will fail to resolve the tip.
+        // We treat this as 0 commits indexed with an error.
+        let result = Git2Ingester::new().sync_repo(&repo, &store, &config);
+        match result {
+            Ok(summary) => {
+                assert_eq!(summary.commits_indexed, 0, "empty repo: no commits indexed");
+            }
+            Err(_) => {
+                // Also acceptable: return an error for completely empty repos
+            }
+        }
+        let commits = store.commits.lock().unwrap();
+        assert_eq!(commits.len(), 0, "no commits in store for empty repo");
+    }
+
+    #[test]
+    fn test_sync_single_commit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_repo = git2::Repository::init(dir.path()).expect("git init");
+
+        // Create a file and commit it
+        let file_path = dir.path().join("README.md");
+        std::fs::write(&file_path, "# Hello\n").expect("write file");
+
+        let mut index = git_repo.index().expect("get index");
+        index.add_path(std::path::Path::new("README.md")).expect("add path");
+        index.write().expect("write index");
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+
+        let sig = git2::Signature::now("Test Author", "test@example.com").expect("sig");
+        git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Initial commit\n\nThis is the body.", &tree, &[])
+            .expect("commit");
+
+        let store = MockStore::new();
+        let repo = make_repo(dir.path());
+        let config = default_config();
+
+        let summary = Git2Ingester::new()
+            .sync_repo(&repo, &store, &config)
+            .expect("sync_repo");
+
+        assert_eq!(summary.commits_indexed, 1, "should index 1 commit");
+        assert_eq!(summary.commits_skipped, 0, "should skip 0 commits");
+        assert!(summary.errors.is_empty(), "no errors: {:?}", summary.errors);
+
+        let commits = store.commits.lock().unwrap();
+        assert_eq!(commits.len(), 1, "store should have 1 commit");
+        assert_eq!(commits[0].subject, "Initial commit");
+        assert_eq!(commits[0].body.as_deref(), Some("This is the body."));
+        assert_eq!(commits[0].parent_count, 0);
+    }
+
+    #[test]
+    fn test_ignore_rules() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_repo = git2::Repository::init(dir.path()).expect("git init");
+
+        // Create files in both node_modules and src
+        let nm_dir = dir.path().join("node_modules");
+        std::fs::create_dir_all(&nm_dir).expect("create node_modules");
+        std::fs::write(nm_dir.join("foo.js"), "console.log('hi');\n").expect("write foo.js");
+
+        let src_dir = dir.path().join("src");
+        std::fs::create_dir_all(&src_dir).expect("create src");
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}\n").expect("write main.rs");
+
+        let mut index = git_repo.index().expect("get index");
+        index
+            .add_path(std::path::Path::new("node_modules/foo.js"))
+            .expect("add node_modules/foo.js");
+        index
+            .add_path(std::path::Path::new("src/main.rs"))
+            .expect("add src/main.rs");
+        index.write().expect("write index");
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+
+        let sig = git2::Signature::now("Test Author", "test@example.com").expect("sig");
+        git_repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Add files",
+                &tree,
+                &[],
+            )
+            .expect("commit");
+
+        let store = MockStore::new();
+        let repo = make_repo(dir.path());
+        let config = IgnoreConfig {
+            path_prefixes: vec!["node_modules/".into()],
+            max_patch_bytes: 1_048_576,
+        };
+
+        let summary = Git2Ingester::new()
+            .sync_repo(&repo, &store, &config)
+            .expect("sync_repo");
+
+        assert_eq!(summary.commits_indexed, 1, "should index 1 commit");
+
+        let files = store.files.lock().unwrap();
+        let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
+
+        assert!(
+            paths.contains(&"src/main.rs"),
+            "src/main.rs should be present, got: {:?}",
+            paths
+        );
+        assert!(
+            !paths.iter().any(|p| p.starts_with("node_modules/")),
+            "node_modules/ paths should be ignored, got: {:?}",
+            paths
+        );
+    }
+}
