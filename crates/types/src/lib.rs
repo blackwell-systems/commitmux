@@ -36,6 +36,7 @@ pub struct Repo {
     pub fork_of: Option<String>,
     pub author_filter: Option<String>,
     pub exclude_prefixes: Vec<String>,
+    pub embed_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +49,7 @@ pub struct RepoInput {
     pub fork_of: Option<String>,
     pub author_filter: Option<String>,
     pub exclude_prefixes: Vec<String>,
+    pub embed_enabled: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -56,6 +58,7 @@ pub struct RepoUpdate {
     pub author_filter: Option<Option<String>>,
     pub exclude_prefixes: Option<Vec<String>>,
     pub default_branch: Option<Option<String>>,
+    pub embed_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -149,6 +152,32 @@ pub struct TouchOpts {
     pub since: Option<i64>,
     pub repos: Option<Vec<String>>,
     pub limit: Option<usize>,
+}
+
+// ── Embedding types ───────────────────────────────────────────────────────
+
+/// Lightweight commit info for embedding document construction.
+/// Also carries the metadata fields written to vec0 auxiliary columns on store_embedding.
+#[derive(Debug, Clone)]
+pub struct EmbedCommit {
+    pub repo_id: i64,
+    pub sha: String,
+    pub subject: String,
+    pub body: Option<String>,
+    pub files_changed: Vec<String>,    // file paths only
+    pub patch_preview: Option<String>,
+    // Auxiliary column fields (stored alongside the vector for join-free search)
+    pub author_name: String,
+    pub repo_name: String,
+    pub author_time: i64,
+}
+
+/// Options for semantic (vector) search.
+#[derive(Debug, Clone, Default)]
+pub struct SemanticSearchOpts {
+    pub repos: Option<Vec<String>>,   // filter by repo name
+    pub since: Option<i64>,           // unix timestamp lower bound
+    pub limit: Option<usize>,         // default 10
 }
 
 // ── MCP response types ────────────────────────────────────────────────────
@@ -269,6 +298,24 @@ pub trait Store: Send + Sync {
     // Admin
     fn repo_stats(&self, repo_id: i64) -> Result<RepoStats>;
     fn count_commits_for_repo(&self, repo_id: i64) -> Result<usize>;
+
+    // Embedding support
+    fn get_config(&self, key: &str) -> Result<Option<String>>;
+    fn set_config(&self, key: &str, value: &str) -> Result<()>;
+    fn get_commits_without_embeddings(&self, repo_id: i64, limit: usize) -> Result<Vec<EmbedCommit>>;
+    #[allow(clippy::too_many_arguments)]
+    fn store_embedding(
+        &self,
+        repo_id: i64,
+        sha: &str,
+        subject: &str,
+        author_name: &str,
+        repo_name: &str,
+        author_time: i64,
+        patch_preview: Option<&str>,
+        embedding: &[f32],
+    ) -> Result<()>;
+    fn search_semantic(&self, embedding: &[f32], opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>>;
 }
 
 pub trait Ingester: Send + Sync {
@@ -293,6 +340,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec![],
+            embed_enabled: false,
         };
         assert_eq!(repo.name, "myrepo");
 
@@ -365,6 +413,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec![],
+            embed_enabled: false,
         };
         assert!(repo.fork_of.is_none());
         assert!(repo.author_filter.is_none());

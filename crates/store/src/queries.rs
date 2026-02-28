@@ -2,9 +2,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::MutexGuard;
 
 use commitmux_types::{
-    Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, CommitmuxError, IngestState,
-    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
-    SearchResult, Store, TouchOpts, TouchResult,
+    Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, CommitmuxError, EmbedCommit,
+    IngestState, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result,
+    SearchOpts, SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -56,6 +56,7 @@ fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         fork_of: row.get(5)?,
         author_filter: row.get(6)?,
         exclude_prefixes: parse_exclude_prefixes(row.get(7)?),
+        embed_enabled: row.get::<_, i64>(8).unwrap_or(0) != 0,
     })
 }
 
@@ -69,8 +70,8 @@ impl Store for SqliteStore {
         let exclude_json = serde_json::to_string(&input.exclude_prefixes)
             .unwrap_or_else(|_| "[]".to_string());
         conn.execute(
-            "INSERT INTO repos (name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO repos (name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 input.name,
                 input.local_path.to_string_lossy().as_ref(),
@@ -79,6 +80,7 @@ impl Store for SqliteStore {
                 input.fork_of,
                 input.author_filter,
                 exclude_json,
+                input.embed_enabled as i64,
             ],
         )?;
         let repo_id = conn.last_insert_rowid();
@@ -91,13 +93,14 @@ impl Store for SqliteStore {
             fork_of: input.fork_of.clone(),
             author_filter: input.author_filter.clone(),
             exclude_prefixes: input.exclude_prefixes.clone(),
+            embed_enabled: input.embed_enabled,
         })
     }
 
     fn list_repos(&self) -> Result<Vec<Repo>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos ORDER BY repo_id",
+            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled FROM repos ORDER BY repo_id",
         )?;
         let repos: rusqlite::Result<Vec<Repo>> =
             stmt.query_map([], row_to_repo)?.collect();
@@ -108,7 +111,7 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let result = conn
             .query_row(
-                "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE name = ?1",
+                "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled FROM repos WHERE name = ?1",
                 params![name],
                 row_to_repo,
             )
@@ -628,6 +631,11 @@ impl Store for SqliteStore {
             });
             idx += 1;
         }
+        if let Some(v) = update.embed_enabled {
+            set_clauses.push(format!("embed_enabled = ?{}", idx));
+            bind_vals.push(Box::new(v as i64));
+            idx += 1;
+        }
 
         if !set_clauses.is_empty() {
             let sql = format!(
@@ -643,20 +651,9 @@ impl Store for SqliteStore {
 
         // Re-fetch
         let repo = conn.query_row(
-            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes FROM repos WHERE repo_id = ?1",
+            "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled FROM repos WHERE repo_id = ?1",
             params![repo_id],
-            |row| {
-                Ok(Repo {
-                    repo_id: row.get(0)?,
-                    name: row.get(1)?,
-                    local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
-                    remote_url: row.get(3)?,
-                    default_branch: row.get(4)?,
-                    fork_of: row.get(5)?,
-                    author_filter: row.get(6)?,
-                    exclude_prefixes: parse_exclude_prefixes(row.get(7)?),
-                })
-            },
+            row_to_repo,
         )?;
 
         Ok(repo)
@@ -768,6 +765,142 @@ impl Store for SqliteStore {
         )?;
         Ok(count as usize)
     }
+
+    // ── Embedding support ─────────────────────────────────────────────────
+
+    fn get_config(&self, key: &str) -> Result<Option<String>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn.query_row(
+            "SELECT value FROM config WHERE key = ?1",
+            params![key],
+            |row| row.get(0),
+        ).optional()?;
+        Ok(result)
+    }
+
+    fn set_config(&self, key: &str, value: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO config (key, value) VALUES (?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            params![key, value],
+        )?;
+        Ok(())
+    }
+
+    fn get_commits_without_embeddings(&self, repo_id: i64, limit: usize) -> Result<Vec<EmbedCommit>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT c.sha, c.subject, c.body, c.patch_preview,
+                    c.author_name, c.author_time, r.name
+             FROM commits c
+             JOIN repos r ON r.repo_id = c.repo_id
+             LEFT JOIN commit_embed_map m ON m.repo_id = c.repo_id AND m.sha = c.sha
+             WHERE c.repo_id = ?1
+               AND m.embed_id IS NULL
+             ORDER BY c.author_time DESC
+             LIMIT ?2",
+        )?;
+        let result: rusqlite::Result<Vec<EmbedCommit>> = stmt
+            .query_map(params![repo_id, limit as i64], |row| {
+                Ok(EmbedCommit {
+                    repo_id,
+                    sha: row.get(0)?,
+                    subject: row.get(1)?,
+                    body: row.get(2)?,
+                    files_changed: vec![],  // empty for perf — patch_preview captures diff content
+                    patch_preview: row.get(3)?,
+                    author_name: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                    author_time: row.get(5)?,
+                    repo_name: row.get(6)?,
+                })
+            })?
+            .collect();
+        Ok(result?)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn store_embedding(
+        &self,
+        repo_id: i64,
+        sha: &str,
+        subject: &str,
+        author_name: &str,
+        repo_name: &str,
+        author_time: i64,
+        patch_preview: Option<&str>,
+        embedding: &[f32],
+    ) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // Insert into key map (idempotent)
+        conn.execute(
+            "INSERT OR IGNORE INTO commit_embed_map (repo_id, sha) VALUES (?1, ?2)",
+            params![repo_id, sha],
+        )?;
+        let embed_id: i64 = conn.query_row(
+            "SELECT embed_id FROM commit_embed_map WHERE repo_id = ?1 AND sha = ?2",
+            params![repo_id, sha],
+            |row| row.get(0),
+        )?;
+        // Convert Vec<f32> to bytes for sqlite-vec
+        let embedding_bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+        // sqlite-vec vec0 tables don't support INSERT OR REPLACE; delete first for idempotency.
+        conn.execute(
+            "DELETE FROM commit_embeddings WHERE embed_id = ?1",
+            params![embed_id],
+        )?;
+        conn.execute(
+            "INSERT INTO commit_embeddings
+                 (embed_id, embedding, sha, subject, repo_name, author_name, author_time, patch_preview)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![embed_id, embedding_bytes, sha, subject, repo_name, author_name, author_time, patch_preview],
+        )?;
+        Ok(())
+    }
+
+    fn search_semantic(&self, embedding: &[f32], opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>> {
+        let conn = self.conn.lock().unwrap();
+        let limit = opts.limit.unwrap_or(10);
+
+        let embedding_bytes: Vec<u8> = embedding
+            .iter()
+            .flat_map(|f| f.to_le_bytes())
+            .collect();
+
+        let repos_json = opts.repos.as_ref()
+            .map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()))
+            .unwrap_or_else(|| "[]".into());
+        let since = opts.since.unwrap_or(0);
+
+        let sql =
+            "SELECT ce.repo_name, ce.sha, ce.subject, ce.author_name, ce.author_time,
+                    ce.patch_preview, distance
+             FROM commit_embeddings ce
+             WHERE ce.embedding MATCH ?1
+               AND k = ?2
+               AND ('' = ?3 OR ce.repo_name IN (SELECT value FROM json_each(?3)))
+               AND (?4 = 0 OR ce.author_time >= ?4)
+             ORDER BY distance";
+
+        let mut stmt = conn.prepare(sql)?;
+        let results: rusqlite::Result<Vec<SearchResult>> = stmt
+            .query_map(params![embedding_bytes, limit as i64, repos_json, since], |row| {
+                Ok(SearchResult {
+                    repo: row.get(0)?,
+                    sha: row.get(1)?,
+                    subject: row.get(2)?,
+                    author: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    date: row.get(4)?,
+                    matched_paths: vec![],
+                    patch_excerpt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                })
+            })?
+            .collect();
+        Ok(results?)
+    }
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -792,6 +925,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec![],
+            embed_enabled: false,
         }
     }
 

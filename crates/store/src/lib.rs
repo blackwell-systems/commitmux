@@ -92,6 +92,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec![],
+            embed_enabled: false,
         }
     }
 
@@ -354,11 +355,126 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec!["dist/".into(), "vendor/".into()],
+            embed_enabled: false,
         };
         store.add_repo(&input).expect("add repo");
 
         let repo = store.get_repo_by_name("prefixrepo").expect("get_repo_by_name").expect("should exist");
         assert_eq!(repo.exclude_prefixes, vec!["dist/".to_string(), "vendor/".to_string()]);
+    }
+
+    // ── New embedding tests ──────────────────────────────────────────────
+
+    #[test]
+    fn test_get_set_config() {
+        let store = make_store();
+        store.set_config("embed.model", "nomic-embed-text").expect("set_config");
+        let val = store.get_config("embed.model").expect("get_config");
+        assert_eq!(val, Some("nomic-embed-text".to_string()));
+
+        // Overwrite
+        store.set_config("embed.model", "all-MiniLM-L6-v2").expect("set_config overwrite");
+        let val2 = store.get_config("embed.model").expect("get_config 2");
+        assert_eq!(val2, Some("all-MiniLM-L6-v2".to_string()));
+
+        // Missing key
+        let missing = store.get_config("embed.nonexistent").expect("get_config missing");
+        assert_eq!(missing, None);
+    }
+
+    #[test]
+    fn test_get_commits_without_embeddings_returns_unembedded() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("embedrepo")).expect("add repo");
+
+        // Add 2 commits
+        store.upsert_commit(&make_commit(repo.repo_id, "embedsha0000001", "first commit")).expect("upsert 1");
+        store.upsert_commit(&make_commit(repo.repo_id, "embedsha0000002", "second commit")).expect("upsert 2");
+
+        // Both should be returned initially
+        let unembedded = store.get_commits_without_embeddings(repo.repo_id, 10).expect("get_commits_without_embeddings");
+        assert_eq!(unembedded.len(), 2, "expected 2 unembedded commits");
+
+        // Store embedding for the first commit — use 768-dim zero vector
+        let embedding = vec![0.0f32; 768];
+        store.store_embedding(
+            repo.repo_id,
+            "embedsha0000001",
+            "first commit",
+            "Alice",
+            "embedrepo",
+            1700000000,
+            None,
+            &embedding,
+        ).expect("store_embedding");
+
+        // Now only 1 should remain
+        let remaining = store.get_commits_without_embeddings(repo.repo_id, 10).expect("get_commits_without_embeddings 2");
+        assert_eq!(remaining.len(), 1, "expected 1 unembedded commit after storing one");
+        assert_eq!(remaining[0].sha, "embedsha0000002");
+    }
+
+    #[test]
+    fn test_store_embedding_idempotent() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("idemrepo")).expect("add repo");
+        store.upsert_commit(&make_commit(repo.repo_id, "idemsha0000001", "idem commit")).expect("upsert");
+
+        let embedding = vec![0.0f32; 768];
+        store.store_embedding(
+            repo.repo_id,
+            "idemsha0000001",
+            "idem commit",
+            "Alice",
+            "idemrepo",
+            1700000000,
+            None,
+            &embedding,
+        ).expect("store_embedding first");
+
+        // Second call must not error
+        store.store_embedding(
+            repo.repo_id,
+            "idemsha0000001",
+            "idem commit",
+            "Alice",
+            "idemrepo",
+            1700000000,
+            None,
+            &embedding,
+        ).expect("store_embedding second (idempotent)");
+    }
+
+    #[test]
+    fn test_embed_enabled_roundtrip() {
+        let store = make_store();
+        let input = RepoInput {
+            name: "embedenabledrepo".to_string(),
+            local_path: PathBuf::from("/tmp/embedenabledrepo"),
+            remote_url: None,
+            default_branch: Some("main".to_string()),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
+            embed_enabled: true,
+        };
+        store.add_repo(&input).expect("add repo with embed_enabled");
+        let repo = store.get_repo_by_name("embedenabledrepo").expect("get_repo_by_name").expect("should exist");
+        assert!(repo.embed_enabled, "expected embed_enabled == true");
+    }
+
+    #[test]
+    fn test_update_repo_embed_enabled() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("updateembedrepo")).expect("add repo");
+        assert!(!repo.embed_enabled, "expected embed_enabled == false initially");
+
+        let update = RepoUpdate {
+            embed_enabled: Some(true),
+            ..RepoUpdate::default()
+        };
+        let updated = store.update_repo(repo.repo_id, &update).expect("update_repo");
+        assert!(updated.embed_enabled, "expected embed_enabled == true after update");
     }
 
     #[test]

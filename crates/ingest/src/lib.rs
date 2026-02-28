@@ -7,9 +7,9 @@ pub use walker::Git2Ingester;
 mod tests {
     use super::*;
     use commitmux_types::{
-        CommitDetail, CommitFile, CommitPatch, IgnoreConfig, IngestState,
+        CommitDetail, CommitFile, CommitPatch, EmbedCommit, IgnoreConfig, IngestState,
         Ingester, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate,
-        Result, SearchOpts, SearchResult, Store, TouchOpts, TouchResult,
+        Result, SearchOpts, SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
     };
     use std::sync::Mutex;
 
@@ -119,6 +119,13 @@ mod tests {
         fn count_commits_for_repo(&self, _repo_id: i64) -> Result<usize> {
             Ok(0)
         }
+
+        fn get_config(&self, _key: &str) -> Result<Option<String>> { Ok(None) }
+        fn set_config(&self, _key: &str, _value: &str) -> Result<()> { Ok(()) }
+        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> Result<Vec<EmbedCommit>> { Ok(vec![]) }
+        #[allow(clippy::too_many_arguments)]
+        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> Result<()> { Ok(()) }
+        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>> { Ok(vec![]) }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -133,6 +140,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec![],
+            embed_enabled: false,
         }
     }
 
