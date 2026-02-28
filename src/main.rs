@@ -300,8 +300,8 @@ fn main() -> Result<()> {
                 match ingester.sync_repo(r, &store, &config) {
                     Ok(summary) => {
                         println!(
-                            "Syncing '{}'... {} commits indexed, {} skipped",
-                            r.name, summary.commits_indexed, summary.commits_skipped
+                            "Syncing '{}'... {} commits indexed, {} already-indexed, {} filtered",
+                            r.name, summary.commits_indexed, summary.commits_already_indexed, summary.commits_filtered
                         );
                         for err in &summary.errors {
                             eprintln!("  warning: {}", err);

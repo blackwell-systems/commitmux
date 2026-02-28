@@ -196,7 +196,8 @@ mod tests {
             .expect("sync_repo");
 
         assert_eq!(summary.commits_indexed, 1, "should index 1 commit");
-        assert_eq!(summary.commits_skipped, 0, "should skip 0 commits");
+        assert_eq!(summary.commits_already_indexed, 0, "should have 0 already-indexed commits");
+        assert_eq!(summary.commits_filtered, 0, "should have 0 filtered commits");
         assert!(summary.errors.is_empty(), "no errors: {:?}", summary.errors);
 
         let commits = store.commits.lock().unwrap();
@@ -315,7 +316,7 @@ mod tests {
             .expect("sync_repo");
 
         assert_eq!(summary.commits_indexed, 1, "should index 1 commit (Alice only)");
-        assert_eq!(summary.commits_skipped, 1, "should skip 1 commit (Bob)");
+        assert_eq!(summary.commits_filtered, 1, "should filter 1 commit (Bob)");
 
         let commits = store.commits.lock().unwrap();
         assert_eq!(commits.len(), 1, "store should have 1 commit");
@@ -414,13 +415,96 @@ mod tests {
             .sync_repo(&repo, &store, &config)
             .expect("sync_repo first run");
         assert_eq!(summary1.commits_indexed, 2, "first run: 2 commits indexed");
-        assert_eq!(summary1.commits_skipped, 0, "first run: 0 skipped");
+        assert_eq!(summary1.commits_already_indexed, 0, "first run: 0 already-indexed");
 
         // Second run: both commits already in store, both skipped
         let summary2 = Git2Ingester::new()
             .sync_repo(&repo, &store, &config)
             .expect("sync_repo second run");
         assert_eq!(summary2.commits_indexed, 0, "second run: 0 indexed");
-        assert_eq!(summary2.commits_skipped, 2, "second run: 2 skipped");
+        assert_eq!(summary2.commits_already_indexed, 2, "second run: 2 already-indexed");
+    }
+
+    #[test]
+    fn test_sync_summary_already_indexed_count() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_repo = git2::Repository::init(dir.path()).expect("git init");
+
+        // Create two commits
+        let file1 = dir.path().join("a.txt");
+        std::fs::write(&file1, "a\n").expect("write a.txt");
+        let mut index = git_repo.index().expect("get index");
+        index.add_path(std::path::Path::new("a.txt")).expect("add a.txt");
+        index.write().expect("write index");
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+        let sig = git2::Signature::now("Dev", "dev@example.com").expect("sig");
+        let c1 = git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Commit A", &tree, &[])
+            .expect("commit A");
+
+        let file2 = dir.path().join("b.txt");
+        std::fs::write(&file2, "b\n").expect("write b.txt");
+        let mut index = git_repo.index().expect("get index");
+        index.add_path(std::path::Path::new("b.txt")).expect("add b.txt");
+        index.write().expect("write index");
+        let tree_oid2 = index.write_tree().expect("write tree");
+        let tree2 = git_repo.find_tree(tree_oid2).expect("find tree");
+        let parent1 = git_repo.find_commit(c1).expect("find c1");
+        git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Commit B", &tree2, &[&parent1])
+            .expect("commit B");
+
+        let store = MockStore::new();
+        let repo = make_repo(dir.path());
+        let config = default_config();
+
+        // First sync: indexes all commits
+        let summary1 = Git2Ingester::new()
+            .sync_repo(&repo, &store, &config)
+            .expect("first sync");
+        assert_eq!(summary1.commits_indexed, 2, "first sync: 2 indexed");
+        assert_eq!(summary1.commits_already_indexed, 0, "first sync: 0 already-indexed");
+        assert_eq!(summary1.commits_filtered, 0, "first sync: 0 filtered");
+
+        // Second sync: all commits already indexed
+        let summary2 = Git2Ingester::new()
+            .sync_repo(&repo, &store, &config)
+            .expect("second sync");
+        assert!(summary2.commits_already_indexed > 0, "second sync: some already-indexed");
+        assert_eq!(summary2.commits_filtered, 0, "second sync: 0 filtered");
+    }
+
+    #[test]
+    fn test_sync_summary_filtered_count() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let git_repo = git2::Repository::init(dir.path()).expect("git init");
+
+        // Commit by one author
+        let file1 = dir.path().join("x.txt");
+        std::fs::write(&file1, "x\n").expect("write x.txt");
+        let mut index = git_repo.index().expect("get index");
+        index.add_path(std::path::Path::new("x.txt")).expect("add x.txt");
+        index.write().expect("write index");
+        let tree_oid = index.write_tree().expect("write tree");
+        let tree = git_repo.find_tree(tree_oid).expect("find tree");
+        let sig = git2::Signature::now("Other Author", "other@example.com").expect("sig");
+        git_repo
+            .commit(Some("HEAD"), &sig, &sig, "Other commit", &tree, &[])
+            .expect("commit");
+
+        let store = MockStore::new();
+        let mut repo = make_repo(dir.path());
+        // Filter for a non-matching email — no commits will match
+        repo.author_filter = Some("nobody@example.com".into());
+        let config = default_config();
+
+        let summary = Git2Ingester::new()
+            .sync_repo(&repo, &store, &config)
+            .expect("sync_repo");
+
+        assert!(summary.commits_filtered > 0, "should have filtered commits");
+        assert_eq!(summary.commits_already_indexed, 0, "should have 0 already-indexed");
+        assert_eq!(summary.commits_indexed, 0, "should have 0 indexed");
     }
 }

@@ -30,7 +30,8 @@ impl commitmux_types::Ingester for Git2Ingester {
         let mut summary = IngestSummary {
             repo_name: repo.name.clone(),
             commits_indexed: 0,
-            commits_skipped: 0,
+            commits_already_indexed: 0,
+            commits_filtered: 0,
             errors: Vec::new(),
         };
 
@@ -194,7 +195,6 @@ impl commitmux_types::Ingester for Git2Ingester {
                     summary
                         .errors
                         .push(format!("Failed to get oid in revwalk: {}", e.message()));
-                    summary.commits_skipped += 1;
                     continue;
                 }
             };
@@ -207,7 +207,6 @@ impl commitmux_types::Ingester for Git2Ingester {
                         oid,
                         e.message()
                     ));
-                    summary.commits_skipped += 1;
                     continue;
                 }
             };
@@ -217,7 +216,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             // Skip commits already in the store (incremental skip)
             match store.commit_exists(repo.repo_id, &sha) {
                 Ok(true) => {
-                    summary.commits_skipped += 1;
+                    summary.commits_already_indexed += 1;
                     continue;
                 }
                 Ok(false) => { /* proceed */ }
@@ -262,7 +261,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             // Author filter: skip commits not matching the configured author email
             if let Some(ref filter_email) = repo.author_filter {
                 if !commit.author_email.eq_ignore_ascii_case(filter_email) {
-                    summary.commits_skipped += 1;
+                    summary.commits_filtered += 1;
                     continue;
                 }
             }
@@ -272,7 +271,6 @@ impl commitmux_types::Ingester for Git2Ingester {
                 summary
                     .errors
                     .push(format!("Failed to upsert commit {}: {}", sha, e));
-                summary.commits_skipped += 1;
                 continue;
             }
 
