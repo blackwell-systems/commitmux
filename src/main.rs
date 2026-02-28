@@ -146,7 +146,15 @@ fn main() -> Result<()> {
                 std::fs::create_dir_all(&clone_dir)
                     .with_context(|| format!("Failed to create clone directory: {}", clone_dir.display()))?;
 
-                git2::Repository::clone(&remote_url, &clone_dir)
+                let mut callbacks = git2::RemoteCallbacks::new();
+                callbacks.credentials(|_url, username, _allowed| {
+                    git2::Cred::ssh_key_from_agent(username.unwrap_or("git"))
+                });
+                let mut fo = git2::FetchOptions::new();
+                fo.remote_callbacks(callbacks);
+                let mut builder = git2::build::RepoBuilder::new();
+                builder.fetch_options(fo);
+                builder.clone(&remote_url, &clone_dir)
                     .with_context(|| format!("Failed to clone '{}' from '{}'", repo_name, remote_url))?;
 
                 store.add_repo(&RepoInput {

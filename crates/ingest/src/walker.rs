@@ -45,7 +45,13 @@ impl commitmux_types::Ingester for Git2Ingester {
                     for remote_name in remotes.iter().flatten() {
                         match git_repo.find_remote(remote_name) {
                             Ok(mut remote) => {
-                                if let Err(e) = remote.fetch::<&str>(&[], None, None) {
+                                let mut callbacks = git2::RemoteCallbacks::new();
+                                callbacks.credentials(|_url, username, _allowed| {
+                                    git2::Cred::ssh_key_from_agent(username.unwrap_or("git"))
+                                });
+                                let mut fo = git2::FetchOptions::new();
+                                fo.remote_callbacks(callbacks);
+                                if let Err(e) = remote.fetch::<&str>(&[], Some(&mut fo), None) {
                                     summary.errors.push(format!(
                                         "Warning: failed to fetch remote '{}': {}",
                                         remote_name,
@@ -177,7 +183,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             // Get and store patch text
             match patch::get_patch_text(&git_repo, &git_commit, config) {
                 Ok(Some(text)) => {
-                    let preview_len = text.len().min(500);
+                    let preview_len = text.floor_char_boundary(500);
                     let patch_preview = text[..preview_len].to_string();
 
                     match zstd::encode_all(text.as_bytes(), 3) {
