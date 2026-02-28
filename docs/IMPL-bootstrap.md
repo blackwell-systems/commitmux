@@ -719,3 +719,56 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 **Implementation choice:** Manual stdio JSON-RPC instead of rmcp — rmcp requires tokio async; manual approach is smaller, synchronous, and has no extra deps. Handles: initialize, notifications/initialized, tools/list, tools/call (isError: true on tool errors), unknown methods (-32601), malformed JSON (skip).
 
 **Entry point:** `pub fn run_mcp_server(store: std::sync::Arc<dyn commitmux_types::Store + 'static>) -> anyhow::Result<()>`
+
+---
+
+### Agent E — Completion Report
+
+**Isolation verification:**
+
+The shell environment resets `pwd` to `/workspace/code/commitmux` between Bash calls. The worktree at `/workspace/code/commitmux/.claude/worktrees/wave2-agent-E` was verified to exist with `.git` pointing to `gitdir: /Users/dayna.blackwell/code/commitmux/.git/worktrees/wave2-agent-E` and `HEAD` containing `ref: refs/heads/wave2-agent-E`. The `/workspace` path is a symlink to `/Users/dayna.blackwell/workspace`, so both path forms refer to the same on-disk location. All file operations were performed using absolute paths in the worktree. The branch `wave2-agent-E` is confirmed correct.
+
+**Files created/modified:**
+
+- `Cargo.toml` (workspace root) — replaced entirely with full workspace definition including `"."` in members, `[package]`, `[[bin]]`, and all path dependencies
+- `src/main.rs` — CLI entry point with `clap` derive macros for all 6 subcommands
+- `tests/integration.rs` — end-to-end integration test
+- `crates/store/src/queries.rs` — fixed `param_idx` bug in `touches` method (see wiring issues below)
+
+**`cargo build --workspace` status:**
+
+```
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.03s
+```
+
+Clean build, no warnings.
+
+**`cargo test --workspace` results:**
+
+```
+commitmux (bin, integration.rs):  1 test  — test_end_to_end ... ok
+commitmux-ingest:                 3 tests — test_sync_empty_repo, test_sync_single_commit, test_ignore_rules ... all ok
+commitmux-mcp:                    7 tests — tools deserialization + protocol handler tests ... all ok
+commitmux-store:                  4 tests — test_add_repo_and_list, test_upsert_commit_idempotent, test_search_fts, test_get_patch_roundtrip ... all ok
+commitmux-types:                  2 tests — test_file_status_display, test_smoke_construct_all_types ... all ok
+```
+
+Total: 17 tests, 0 failures.
+
+**Integration test: PASS**
+
+`test_end_to_end` creates a real git repo with 2 commits, opens a SQLite store, ingests via `Git2Ingester`, searches for "initial commit", tests `touches("src/")`, and retrieves a commit by SHA. All assertions pass.
+
+**Wiring issues encountered:**
+
+1. **`touches` parameter index bug in `crates/store/src/queries.rs`** — The `touches` method initialized `param_idx = 3` instead of `2`. This left a gap (`?2` was never referenced) so the SQL contained `?1` and `?3` while only 2 params were provided (`like_pat` and `limit`). rusqlite raised `Store(InvalidParameterCount(2, 3))` at runtime. Fixed by changing `param_idx` to start at `2`. The existing store unit tests did not catch this because they pass `TouchOpts` with non-default fields; the integration test used `TouchOpts::default()` (no optional filters) which exposed the gap. The fix is a one-character change: `3usize` → `2usize`.
+
+2. **`serve` command trait object wrapping** — `SqliteStore` implements `Store + Send + Sync`. Wrapping in `Arc<dyn commitmux_types::Store + 'static>` compiles cleanly because `SqliteStore` uses `Mutex<rusqlite::Connection>` internally for thread safety. No issues.
+
+3. **Timestamp formatting without `chrono`** — Implemented manual Gregorian calendar arithmetic in `format_timestamp` to avoid adding a dependency. Handles positive unix timestamps correctly.
+
+**Deviations from CLI spec:**
+
+- `add-repo --exclude` prefixes are noted in a printed message but not persisted to a sidecar file for MVP; sync always uses `IgnoreConfig::default()` augmented by defaults. This matches the "simplest approach" described in the spec.
+- `serde_json = "1"` added to `[dependencies]` in `Cargo.toml` (needed by `show` command for `serde_json::to_string_pretty`). The spec's `Cargo.toml` template did not include it but implied it was needed; added as required.
+- `tokio` dependency was not included in `Cargo.toml` since the MCP server uses a synchronous stdio implementation (Agent D chose manual JSON-RPC over rmcp/tokio). Not needed.
