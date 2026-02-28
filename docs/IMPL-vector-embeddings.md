@@ -325,8 +325,8 @@ Wave 2 → Done gate: Full build, clippy clean, all tests pass; smoke test `comm
 - [x] Wave 0 — Schema migration (embed_enabled, config table, commit_embed_map, commit_embeddings)
 - [x] Wave 1A — types/store: new Store trait methods, EmbedCommit, SemanticSearchOpts, Repo.embed_enabled, SQL implementations, MockStore cascade
 - [x] Wave 1B — crates/embed: Embedder, embed_pending, build_embed_doc, EmbedSummary, EmbedConfig
-- [ ] Wave 2A — src/main.rs: --embed/--no-embed, config subcommand, --embed-only sync, status EMBED column
-- [ ] Wave 2B — crates/mcp: commitmux_search_semantic tool, SemanticSearchInput, StubStore cascade
+- [x] Wave 2A — src/main.rs: --embed/--no-embed, config subcommand, --embed-only sync, status EMBED column
+- [x] Wave 2B — crates/mcp: commitmux_search_semantic tool, SemanticSearchInput, StubStore cascade
 
 ---
 
@@ -420,8 +420,41 @@ verification: FAIL (build blocked on Wave 1A: missing EmbedCommit and new Store 
 
 ### Agent 2A — Completion Report
 
-*(to be filled by agent)*
+```yaml
+status: complete
+worktree: .claude/worktrees/wave2-agent-a
+commit: 6b8a71b
+files_changed:
+  - src/main.rs
+  - Cargo.toml
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_config_set_get_roundtrip
+  - test_embed_sync_tip_logic
+verification: PASS (cargo build, cargo clippy -D warnings, cargo test -p commitmux — 12/12 unit + 1/1 integration tests)
+```
 
 ### Agent 2B — Completion Report
 
-*(to be filled by agent)*
+```yaml
+status: complete
+worktree: .claude/worktrees/wave2-agent-b
+commit: 04f3611
+files_changed:
+  - crates/mcp/src/lib.rs
+  - crates/mcp/src/tools.rs
+  - crates/mcp/Cargo.toml
+files_created: []
+interface_deviations:
+  - call_search_semantic returns Result<String, String> (matching the existing tool method
+    pattern used by handle_tools_call) rather than anyhow::Result<serde_json::Value> as
+    specified in the agent prompt. The content envelope wrapping is handled by handle_tools_call
+    uniformly for all tools. Semantics are identical.
+out_of_scope_deps: []
+tests_added:
+  - test_tools_list_includes_semantic
+  - test_search_semantic_missing_query
+verification: PASS (cargo build, cargo clippy -D warnings, cargo test -p commitmux-mcp — 12/12 tests)
+```
