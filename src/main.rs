@@ -218,6 +218,7 @@ fn main() -> Result<()> {
                     fork_of: fork_of.clone(),
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
+                    embed_enabled: false, // TODO Wave 2A: wire --embed/--no-embed flags
                 })
                 .map_err(|e| {
                     if e.to_string().contains("UNIQUE constraint") {
@@ -258,6 +259,7 @@ fn main() -> Result<()> {
                     fork_of: fork_of.clone(),
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
+                    embed_enabled: false, // TODO Wave 2A: wire --embed/--no-embed flags
                 })
                 .map_err(|e| {
                     if e.to_string().contains("UNIQUE constraint") {
@@ -336,6 +338,7 @@ fn main() -> Result<()> {
                 author_filter: author.map(Some),
                 exclude_prefixes: if exclude.is_empty() { None } else { Some(exclude) },
                 default_branch: default_branch.map(Some),
+                embed_enabled: None, // TODO Wave 2A: wire --embed/--no-embed flags
             };
 
             let any_change = update.fork_of.is_some()
