@@ -17,6 +17,8 @@ Agents need prior-work context: how a problem was solved before, what changed in
 - **Give the agent nothing** — it hallucinates or you paste context manually.
 - **Paste context yourself** — interrupts flow, doesn't scale.
 
+The cross-repo problem makes this worse: when you maintain 20+ repos and need to know what changed in the auth layer last quarter, `git log` requires you to check each repo manually. commitmux answers cross-repo questions in a single query.
+
 commitmux is a third option. It builds a read-optimized local index over your commit history and exposes it as a narrow, read-only MCP tool surface. Two search modes work together:
 
 - **Full-text search** (FTS5) — fast keyword search over commit subjects, bodies, and patch previews.
@@ -24,7 +26,13 @@ commitmux is a third option. It builds a read-optimized local index over your co
 
 The index lives in a single SQLite file on your machine. The MCP server runs as a subprocess of your agent host. Nothing leaves your machine.
 
+## How it works
+
+commitmux walks your git history using libgit2 (no `git` binary required), stores commits in SQLite with FTS5 full-text indexing over subjects, bodies, and patch previews, and compresses raw diffs with zstd. Semantic search stores float32 embeddings alongside commit metadata — cosine similarity is computed in-process with no external vector database. The MCP server speaks JSON-RPC 2.0 over stdio; your agent host runs it as a subprocess and the five read-only tools become available to the agent.
+
 ## Quick start
+
+### Basic setup
 
 ```sh
 # 1. Build and install
@@ -53,18 +61,50 @@ commitmux add-repo --url git@github.com:org/repo.git
 
 # 4. Ingest commits (fetches from remote first for URL-based repos)
 commitmux sync
+```
 
-# 5. (Optional) Enable semantic search with Ollama
+After `sync`, the keyword search index is ready. Configure your agent host to run `commitmux serve` (see [MCP host setup](#mcp-host-setup)) and the MCP tools become available to the agent.
+
+### Enable semantic search (optional)
+
+Semantic search lets agents query by natural language instead of keywords. Requires any OpenAI-compatible embeddings endpoint — works out of the box with [Ollama](https://ollama.com) running locally.
+
+```sh
 ollama pull nomic-embed-text
 commitmux config set embed.model nomic-embed-text
 commitmux add-repo ~/code/myproject --embed   # or: commitmux update-repo myproject --embed
 commitmux sync --embed-only                   # backfill embeddings for existing commits
+```
 
-# 6. Start the MCP server (stdio transport — run by your agent host, not manually)
+To use a hosted provider instead:
+
+```sh
+commitmux config set embed.endpoint https://api.openai.com/v1
+commitmux config set embed.model text-embedding-3-small
+```
+
+### Start the MCP server
+
+```sh
+# stdio transport — run by your agent host, not manually in a terminal
 commitmux serve
 ```
 
-After `sync`, the index is ready. Configure your agent host to run `commitmux serve` (see [MCP host setup](#mcp-host-setup)) and the MCP tools become available to the agent. Semantic search requires Ollama running locally with a text embedding model pulled.
+## In action
+
+Once the MCP server is running, an agent can query your git history directly. Two examples:
+
+**"Have we implemented rate limiting before?"**
+
+The agent calls `commitmux_search` with `query: "rate limiting"`. commitmux returns matching commits with patch excerpts. The agent calls `commitmux_get_patch` on the most relevant SHA to read the full diff. It builds on the prior implementation instead of starting from scratch.
+
+**"What changed in the auth layer across all repos last month?"**
+
+The agent calls `commitmux_touches` with `path_glob: "auth/"` and a `since` timestamp. commitmux returns commits from every indexed repo — `api-server`, `auth-service`, `web-frontend` — in a single response. No switching between repos, no pasting `git log` output, no token exposure.
+
+**"Find commits related to backpressure and retry logic"** (semantic search)
+
+The agent calls `commitmux_search_semantic` with that natural language query. commitmux embeds the query and returns commits by vector similarity — surfacing relevant work even when the exact words don't appear in the commit message.
 
 ## CLI reference
 
@@ -118,6 +158,24 @@ commitmux add-repo --url git@github.com:org/repo.git --embed
 The `--exclude` flag appends to the default ignore list. Default ignored prefixes: `node_modules/`, `vendor/`, `dist/`, `.git/`.
 
 SSH remotes use the SSH agent for authentication. Ensure your SSH agent is running and has the relevant key loaded (`ssh-add`) before running `sync` against an SSH URL.
+
+### `update-repo`
+
+Update configuration for an already-registered repository. Use this to enable or disable embeddings on a repo that was added before semantic search was configured.
+
+```sh
+commitmux update-repo <name> [--embed] [--no-embed]
+```
+
+```sh
+# Enable embeddings on an existing repo
+commitmux update-repo myproject --embed
+
+# Disable embeddings
+commitmux update-repo myproject --no-embed
+```
+
+After enabling embeddings, run `commitmux sync --embed-only` to backfill existing commits.
 
 ### `sync`
 
@@ -208,7 +266,7 @@ The server exposes five tools. All tools are read-only.
 
 Natural language semantic search over commit history using vector similarity. Use when keyword search is insufficient — e.g. "find commits related to error handling" or "work similar to this description". Only returns results for repos with embeddings enabled.
 
-Requires [Ollama](https://ollama.com) running locally (or any OpenAI-compatible embeddings endpoint). Configure with `commitmux config set embed.model <model>`.
+Requires any OpenAI-compatible embeddings endpoint. Works out of the box with [Ollama](https://ollama.com) running locally; supports OpenAI and any compatible provider. Configure with `commitmux config set embed.endpoint <url>` and `commitmux config set embed.model <model>`.
 
 **Input schema:**
 
