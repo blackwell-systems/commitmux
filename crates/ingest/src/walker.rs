@@ -38,6 +38,40 @@ impl commitmux_types::Ingester for Git2Ingester {
         let git_repo = git2::Repository::open(&repo.local_path)
             .map_err(|e| CommitmuxError::Ingest(e.message().to_string()))?;
 
+        // If this is a managed clone (has a remote_url), fetch all remotes to keep it up to date
+        if repo.remote_url.is_some() {
+            match git_repo.remotes() {
+                Ok(remotes) => {
+                    for remote_name in remotes.iter().flatten() {
+                        match git_repo.find_remote(remote_name) {
+                            Ok(mut remote) => {
+                                if let Err(e) = remote.fetch::<&str>(&[], None, None) {
+                                    summary.errors.push(format!(
+                                        "Warning: failed to fetch remote '{}': {}",
+                                        remote_name,
+                                        e.message()
+                                    ));
+                                }
+                            }
+                            Err(e) => {
+                                summary.errors.push(format!(
+                                    "Warning: failed to open remote '{}': {}",
+                                    remote_name,
+                                    e.message()
+                                ));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    summary.errors.push(format!(
+                        "Warning: failed to list remotes: {}",
+                        e.message()
+                    ));
+                }
+            }
+        }
+
         // Resolve the tip commit
         let tip_commit = resolve_tip(&git_repo, repo)?;
         let tip_oid = tip_commit.id();

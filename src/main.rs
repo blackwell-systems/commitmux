@@ -21,13 +21,16 @@ enum Commands {
         db: Option<PathBuf>,
     },
     AddRepo {
-        path: PathBuf,
+        #[arg(conflicts_with = "url")]
+        path: Option<PathBuf>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long = "exclude")]
         exclude: Vec<String>,
         #[arg(long)]
         db: Option<PathBuf>,
+        #[arg(conflicts_with = "path", long)]
+        url: Option<String>,
     },
     Sync {
         #[arg(long)]
@@ -109,22 +112,10 @@ fn main() -> Result<()> {
             println!("Initialized commitmux database at {}", db_path.display());
         }
 
-        Commands::AddRepo { path, name, exclude, db } => {
+        Commands::AddRepo { path, name, exclude, db, url } => {
             let db_path = resolve_db_path(db);
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
-
-            let canonical = path.canonicalize()
-                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?;
-
-            let repo_name = match name {
-                Some(n) => n,
-                None => canonical
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown")
-                    .to_string(),
-            };
 
             if !exclude.is_empty() {
                 eprintln!(
@@ -133,15 +124,66 @@ fn main() -> Result<()> {
                 );
             }
 
-            store.add_repo(&RepoInput {
-                name: repo_name.clone(),
-                local_path: canonical.clone(),
-                remote_url: None,
-                default_branch: None,
-            })
-            .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
+            if let Some(remote_url) = url {
+                // URL-based ingestion: derive name from URL basename, clone repo
+                let derived_name = remote_url
+                    .trim_end_matches('/')
+                    .split('/')
+                    .last()
+                    .unwrap_or("repo")
+                    .trim_end_matches(".git")
+                    .to_string();
+                let repo_name = name.unwrap_or(derived_name);
 
-            println!("Added repo '{}' at {}", repo_name, canonical.display());
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                let clone_dir = PathBuf::from(home)
+                    .join(".commitmux")
+                    .join("clones")
+                    .join(&repo_name);
+
+                println!("Cloning {} from {}...", repo_name, remote_url);
+
+                std::fs::create_dir_all(&clone_dir)
+                    .with_context(|| format!("Failed to create clone directory: {}", clone_dir.display()))?;
+
+                git2::Repository::clone(&remote_url, &clone_dir)
+                    .with_context(|| format!("Failed to clone '{}' from '{}'", repo_name, remote_url))?;
+
+                store.add_repo(&RepoInput {
+                    name: repo_name.clone(),
+                    local_path: clone_dir.clone(),
+                    remote_url: Some(remote_url.clone()),
+                    default_branch: None,
+                })
+                .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
+
+                println!("Added repo '{}' at {}", repo_name, clone_dir.display());
+            } else if let Some(local_path) = path {
+                // Local path ingestion
+                let canonical = local_path.canonicalize()
+                    .with_context(|| format!("Failed to canonicalize path: {}", local_path.display()))?;
+
+                let repo_name = match name {
+                    Some(n) => n,
+                    None => canonical
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                };
+
+                store.add_repo(&RepoInput {
+                    name: repo_name.clone(),
+                    local_path: canonical.clone(),
+                    remote_url: None,
+                    default_branch: None,
+                })
+                .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
+
+                println!("Added repo '{}' at {}", repo_name, canonical.display());
+            } else {
+                anyhow::bail!("Either a local path or --url must be provided. Usage:\n  commitmux add-repo <PATH>\n  commitmux add-repo --url <URL>");
+            }
         }
 
         Commands::Sync { repo, db } => {
