@@ -38,7 +38,7 @@ enum Commands {
         fork_of: Option<String>,
         #[arg(long = "author", help = "Only index commits by this author (email match)")]
         author: Option<String>,
-        #[arg(long = "embed", help = "Enable semantic embeddings for this repo (requires: commitmux config set embed.model <model>)")]
+        #[arg(long = "embed", help = "Enable semantic embeddings for this repo. Requires: 1) Ollama running, 2) embed.model configured (see: commitmux config --help)")]
         embed: bool,
     },
     #[command(about = "Remove a repository and all its indexed commits")]
@@ -73,7 +73,7 @@ enum Commands {
         repo: Option<String>,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
-        #[arg(long = "embed-only", help = "Generate embeddings for already-indexed commits; skip indexing new commits. Useful when embedding was enabled after initial sync.")]
+        #[arg(long = "embed-only", help = "Generate embeddings for already-indexed commits; skip indexing new commits. Useful for backfilling when embeddings were enabled after initial sync.")]
         embed_only: bool,
     },
     #[command(about = "Show full details for a specific commit (JSON output)")]
@@ -95,7 +95,7 @@ enum Commands {
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
-    #[command(about = "Get or set global configuration values")]
+    #[command(about = "Get or set global configuration values. For semantic search: set embed.model (e.g. nomic-embed-text) and embed.endpoint (default: http://localhost:11434/v1). Requires Ollama running.")]
     Config {
         #[command(subcommand)]
         action: ConfigAction,
