@@ -26,6 +26,8 @@ enum Commands {
         name: Option<String>,
         #[arg(long = "exclude")]
         exclude: Vec<String>,
+        #[arg(long)]
+        db: Option<PathBuf>,
     },
     Sync {
         #[arg(long)]
@@ -107,8 +109,8 @@ fn main() -> Result<()> {
             println!("Initialized commitmux database at {}", db_path.display());
         }
 
-        Commands::AddRepo { path, name, exclude } => {
-            let db_path = resolve_db_path(None);
+        Commands::AddRepo { path, name, exclude, db } => {
+            let db_path = resolve_db_path(db);
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
