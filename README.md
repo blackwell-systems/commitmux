@@ -5,9 +5,9 @@
 [![MCP Compatible](https://img.shields.io/badge/MCP-compatible-blue.svg)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A local MCP server that gives coding agents structured, bounded, credential-free access to git history across multiple repos.
+Keyword and semantic search over your git history, exposed as MCP tools for coding agents. Cross-repo, local-first, no credentials, no rate limits.
 
-Agents call it like a function. You control what's indexed. No network, no tokens, no rate limits.
+Agents can search by keyword or describe what they're looking for in natural language. You control what's indexed. Nothing leaves your machine.
 
 ## Why commitmux
 
@@ -17,7 +17,12 @@ Agents need prior-work context: how a problem was solved before, what changed in
 - **Give the agent nothing** — it hallucinates or you paste context manually.
 - **Paste context yourself** — interrupts flow, doesn't scale.
 
-commitmux is a third option. It builds a read-optimized local index over your commit history and exposes it as a narrow, read-only MCP tool surface. The index lives in a single SQLite file on your machine. The MCP server runs as a subprocess of your agent host. Nothing leaves your machine.
+commitmux is a third option. It builds a read-optimized local index over your commit history and exposes it as a narrow, read-only MCP tool surface. Two search modes work together:
+
+- **Full-text search** (FTS5) — fast keyword search over commit subjects, bodies, and patch previews.
+- **Semantic search** (vector embeddings) — natural language queries like "find commits related to rate limiting" or "work similar to this description". Powered by any OpenAI-compatible embedding endpoint; works out of the box with [Ollama](https://ollama.com) running locally.
+
+The index lives in a single SQLite file on your machine. The MCP server runs as a subprocess of your agent host. Nothing leaves your machine.
 
 ## Quick start
 
@@ -49,11 +54,17 @@ commitmux add-repo --url git@github.com:org/repo.git
 # 4. Ingest commits (fetches from remote first for URL-based repos)
 commitmux sync
 
-# 5. Start the MCP server (stdio transport — run by your agent host, not manually)
+# 5. (Optional) Enable semantic search with Ollama
+ollama pull nomic-embed-text
+commitmux config set embed.model nomic-embed-text
+commitmux add-repo ~/code/myproject --embed   # or: commitmux update-repo myproject --embed
+commitmux sync --embed-only                   # backfill embeddings for existing commits
+
+# 6. Start the MCP server (stdio transport — run by your agent host, not manually)
 commitmux serve
 ```
 
-After `sync`, the index is ready. Configure your agent host to run `commitmux serve` (see [MCP host setup](#mcp-host-setup)) and the four MCP tools become available to the agent.
+After `sync`, the index is ready. Configure your agent host to run `commitmux serve` (see [MCP host setup](#mcp-host-setup)) and the MCP tools become available to the agent. Semantic search requires Ollama running locally with a text embedding model pulled.
 
 ## CLI reference
 
@@ -94,6 +105,16 @@ commitmux add-repo --url git@github.com:org/repo.git
 commitmux add-repo --url https://github.com/org/repo.git --name repo
 ```
 
+Pass `--embed` to enable semantic embeddings for the repo. Embeddings are generated during `sync` using the configured model.
+
+```sh
+# Enable embeddings on registration
+commitmux add-repo ~/code/myproject --embed
+
+# Add a remote repo with embeddings
+commitmux add-repo --url git@github.com:org/repo.git --embed
+```
+
 The `--exclude` flag appends to the default ignore list. Default ignored prefixes: `node_modules/`, `vendor/`, `dist/`, `.git/`.
 
 SSH remotes use the SSH agent for authentication. Ensure your SSH agent is running and has the relevant key loaded (`ssh-add`) before running `sync` against an SSH URL.
@@ -105,11 +126,14 @@ Ingest commits from all registered repos, or a single repo. Safe to re-run — u
 ```sh
 commitmux sync
 commitmux sync --repo myproject
+commitmux sync --embed-only   # generate embeddings only; skip re-ingesting commits
 ```
 
 Ingestion walks the default branch only. Commits are skipped if the patch exceeds 1 MB or contains only binary diffs. Run `sync` again at any time to pick up new commits.
 
 For repos registered with `--url`, `sync` automatically fetches from the remote before walking history. No additional flags are needed — a plain `commitmux sync` keeps URL-based repos up to date.
+
+After ingestion, embeddings are automatically generated for any repo with `--embed` enabled. Use `--embed-only` to backfill embeddings without re-walking history (e.g. after enabling embeddings on a repo that was already synced).
 
 ### `show`
 
@@ -131,10 +155,39 @@ commitmux status
 ```
 
 ```
-REPO                  COMMITS  LAST SYNCED
-myproject                2341  2026-02-28 14:03:17
-another                   892  2026-02-28 14:03:51
+REPO                  COMMITS  SOURCE                                             LAST SYNCED             EMBED
+myproject                2341  /Users/you/code/myproject                         2026-02-28 14:03:17 UTC  ✓
+another                   892  https://github.com/org/another.git                2026-02-28 14:03:51 UTC  -
+
+Embedding model: nomic-embed-text (http://localhost:11434/v1) — ✓ = enabled
 ```
+
+### `config`
+
+Read and write named configuration values. Used primarily to configure the embedding model and endpoint.
+
+```sh
+commitmux config get <key>
+commitmux config set <key> <value>
+```
+
+Supported keys:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `embed.model` | `nomic-embed-text` | Embedding model name passed to the API |
+| `embed.endpoint` | `http://localhost:11434/v1` | OpenAI-compatible embeddings endpoint |
+
+```sh
+# Use a different Ollama model
+commitmux config set embed.model mxbai-embed-large
+
+# Point at a remote OpenAI-compatible endpoint
+commitmux config set embed.endpoint https://api.openai.com/v1
+commitmux config set embed.model text-embedding-3-small
+```
+
+Configuration is stored in the database. Values persist across commands.
 
 ### `serve`
 
@@ -149,7 +202,53 @@ The server reads newline-delimited JSON-RPC from stdin and writes responses to s
 
 ## MCP tools reference
 
-The server exposes four tools. All tools are read-only.
+The server exposes five tools. All tools are read-only.
+
+### `commitmux_search_semantic`
+
+Natural language semantic search over commit history using vector similarity. Use when keyword search is insufficient — e.g. "find commits related to error handling" or "work similar to this description". Only returns results for repos with embeddings enabled.
+
+Requires [Ollama](https://ollama.com) running locally (or any OpenAI-compatible embeddings endpoint). Configure with `commitmux config set embed.model <model>`.
+
+**Input schema:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | yes | Natural language description of what you're looking for |
+| `since` | integer | no | Unix timestamp lower bound on author date |
+| `repos` | string[] | no | Restrict to these repo names |
+| `limit` | integer | no | Max results. Default: 10 |
+
+**Example call:**
+
+```json
+{
+  "name": "commitmux_search_semantic",
+  "arguments": {
+    "query": "rate limiting and backpressure",
+    "repos": ["api-server"],
+    "limit": 5
+  }
+}
+```
+
+**Example output:**
+
+```json
+[
+  {
+    "repo": "api-server",
+    "sha": "a3f9c12b4e77d",
+    "subject": "Add token bucket rate limiter to middleware stack",
+    "author": "Dayna Blackwell",
+    "date": 1740700997,
+    "score": 0.91,
+    "patch_excerpt": "diff --git a/src/middleware/rate_limit.rs ..."
+  }
+]
+```
+
+Results include a `score` field (0–1) indicating similarity to the query. Higher is more similar.
 
 ### `commitmux_search`
 
@@ -407,3 +506,5 @@ See [docs/mcp.md](docs/mcp.md) for the full MCP integration reference, including
 - Patches stored as zstd-compressed blobs (level 3). FTS5 index covers subject, body, and the first 500 characters of each patch.
 - SQLite WAL mode enabled. The database is safe for reads during a concurrent sync.
 - The MCP server is synchronous (no async runtime). Each request is handled inline on the main thread.
+- Embeddings are stored as raw float32 blobs in SQLite alongside commit metadata. Similarity search uses cosine distance computed in-process — no separate vector database required.
+- Embedding API calls use [async-openai](https://github.com/64bit/async-openai) against any OpenAI-compatible `/v1/embeddings` endpoint. Works with Ollama, OpenAI, and compatible providers.

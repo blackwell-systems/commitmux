@@ -9,6 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **Semantic search**: `commitmux_search_semantic` MCP tool — natural language search over commit history using vector embeddings. Finds commits by intent, not just keywords. Powered by any OpenAI-compatible embedding endpoint (Ollama by default).
+- `add-repo --embed`: enable semantic embeddings when registering a repo.
+- `update-repo --embed` / `update-repo --no-embed`: enable or disable embeddings on an existing repo.
+- `sync --embed-only`: generate embeddings for already-indexed commits without re-ingesting. Useful when embeddings are enabled after initial sync.
+- `config get <key>` / `config set <key> <value>`: read and write named configuration values. Currently supported keys: `embed.model` (default: `nomic-embed-text`) and `embed.endpoint` (default: `http://localhost:11434/v1`).
+- `commitmux status` EMBED column: shows `✓` for repos with embeddings enabled, `-` for disabled. Footer shows the active embedding model and endpoint.
 - `add-repo --url <git-url>` flag: register a remote repository by URL. commitmux auto-clones the repo to `~/.commitmux/clones/<name>/` on first sync.
 - Automatic remote fetch before ingest when a repo was registered with `--url`. Running `commitmux sync` on a URL-based repo pulls the latest commits from the remote before walking history.
 - SSH agent authentication support for clone and fetch operations against SSH remotes.
@@ -42,6 +48,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- `embed_pending` now fail-fasts on Ollama connection errors instead of printing one error per commit and exiting 0. A single actionable message is shown with the configured endpoint and instructions to run `ollama serve`.
+- `config set` now validates keys against a known allowlist and rejects empty values, rather than silently accepting invalid configuration.
+- `--embed` and `--no-embed` are now mutually exclusive at the CLI level (clap `conflicts_with`); previously passing both flags silently resolved to the last one.
+- `commitmux serve` now prints a startup confirmation to stderr so it is clear the server is running.
+- `commitmux show` not-found error now includes `Error:` prefix and the repo name and SHA searched.
+- PATH guidance added to README and quick start: `~/.cargo/bin` must be on `PATH` for the binary to be found in non-interactive shells (e.g. agent host environments).
 - `add-repo` command was missing the `--db` flag, preventing database path override.
 - Panic on patch preview retrieval when a multi-byte UTF-8 character fell on a truncation boundary.
 - SSH agent authentication failures when cloning or fetching from SSH remotes.
