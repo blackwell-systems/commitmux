@@ -428,6 +428,19 @@ fn main() -> Result<()> {
                                             "Embedding '{}'... {} embedded, {} failed",
                                             r.name, esummary.embedded, esummary.failed
                                         );
+                                        // Update last_synced_at timestamp after successful embedding
+                                        let now = std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs() as i64;
+                                        let prev_state = store.get_ingest_state(r.repo_id).ok().flatten();
+                                        let ingest_state = commitmux_types::IngestState {
+                                            repo_id: r.repo_id,
+                                            last_synced_at: now,
+                                            last_synced_sha: prev_state.as_ref().and_then(|s| s.last_synced_sha.clone()),
+                                            last_error: None,
+                                        };
+                                        let _ = store.update_ingest_state(&ingest_state);
                                     }
                                     Err(e) => eprintln!("  Warning: embedding failed for '{}': {e}", r.name),
                                 }
