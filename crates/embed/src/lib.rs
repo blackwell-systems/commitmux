@@ -28,6 +28,7 @@ impl EmbedConfig {
 pub struct Embedder {
     client: async_openai::Client<async_openai::config::OpenAIConfig>,
     pub model: String,
+    pub endpoint: String,
 }
 
 impl Embedder {
@@ -39,6 +40,7 @@ impl Embedder {
         Self {
             client: async_openai::Client::with_config(openai_config),
             model: config.model.clone(),
+            endpoint: config.endpoint.clone(),
         }
     }
 
@@ -100,11 +102,21 @@ pub fn build_embed_doc(commit: &EmbedCommit) -> String {
     doc
 }
 
+// ── Connection error detection ─────────────────────────────────────────────
+
+/// Returns true if the error is a connection-level failure (e.g. Ollama not running).
+/// Uses string matching on the reqwest error text as a reliable cross-platform heuristic.
+pub fn is_connection_error(e: &anyhow::Error) -> bool {
+    let msg = e.to_string();
+    msg.contains("error sending request") || msg.contains("connection refused")
+}
+
 // ── embed_pending ──────────────────────────────────────────────────────────
 
 /// Embeds all commits without embeddings for a repo.
-/// Fetches in batches of `batch_size`. On per-commit failures: increments `failed`, continues.
-/// Returns Err only if the store query itself fails.
+/// Fetches in batches of `batch_size`. On connection errors: returns Err immediately with an
+/// actionable message. On other per-commit failures: increments `failed`, continues.
+/// Returns Err if the store query itself fails, or on a connection-level embedding failure.
 pub async fn embed_pending(
     store: &dyn Store,
     embedder: &Embedder,
@@ -151,6 +163,12 @@ pub async fn embed_pending(
                     }
                 }
                 Err(e) => {
+                    if is_connection_error(&e) {
+                        return Err(anyhow::anyhow!(
+                            "Cannot connect to Ollama at {} — is Ollama running? Try: ollama serve",
+                            embedder.endpoint
+                        ));
+                    }
                     eprintln!("embed: failed to embed {}: {e}", commit.sha);
                     summary.failed += 1;
                 }
@@ -370,5 +388,46 @@ mod tests {
             .expect("from_store should succeed with NullStore");
         assert_eq!(config.model, "nomic-embed-text");
         assert_eq!(config.endpoint, "http://localhost:11434/v1");
+    }
+
+    #[test]
+    fn test_connection_error_detection() {
+        // Verify that errors containing "error sending request" are detected as connection errors
+        let conn_err = anyhow::anyhow!("error sending request for url (http://localhost:11434/v1/embeddings)");
+        assert!(
+            is_connection_error(&conn_err),
+            "should detect 'error sending request' as a connection error"
+        );
+
+        // Verify that errors containing "connection refused" are also detected
+        let refused_err = anyhow::anyhow!("connection refused (os error 111)");
+        assert!(
+            is_connection_error(&refused_err),
+            "should detect 'connection refused' as a connection error"
+        );
+
+        // Verify that unrelated errors are NOT detected as connection errors
+        let model_err = anyhow::anyhow!("model 'nomic-embed-text' not found");
+        assert!(
+            !is_connection_error(&model_err),
+            "should not detect 'model not found' as a connection error"
+        );
+
+        let bad_response_err = anyhow::anyhow!("unexpected response status: 500 Internal Server Error");
+        assert!(
+            !is_connection_error(&bad_response_err),
+            "should not detect a bad response as a connection error"
+        );
+    }
+
+    #[test]
+    fn test_embedder_has_endpoint_field() {
+        let config = EmbedConfig {
+            model: "test-model".into(),
+            endpoint: "http://test:11434/v1".into(),
+        };
+        let embedder = Embedder::new(&config);
+        assert_eq!(embedder.endpoint, "http://test:11434/v1");
+        assert_eq!(embedder.model, "test-model");
     }
 }
