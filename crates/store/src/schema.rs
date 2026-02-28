@@ -75,8 +75,14 @@ CREATE TABLE IF NOT EXISTS commit_embed_map (
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS commit_embeddings USING vec0(
-    embed_id INTEGER PRIMARY KEY,
-    embedding FLOAT[768]
+    embed_id       INTEGER PRIMARY KEY,
+    embedding      FLOAT[768],
+    +sha           TEXT,
+    +subject       TEXT,
+    +repo_name     TEXT,
+    +author_name   TEXT,
+    +author_time   INTEGER,
+    +patch_preview TEXT
 );
 
 "#;
