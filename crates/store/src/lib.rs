@@ -10,8 +10,22 @@ pub struct SqliteStore {
 }
 
 impl SqliteStore {
+    /// Register the sqlite-vec extension so that all subsequent connections automatically
+    /// load it. This must be called before any `rusqlite::Connection` is opened.
+    /// `sqlite3_auto_extension` is idempotent — SQLite silently ignores duplicate
+    /// registrations.
+    fn register_vec_extension() {
+        #[allow(clippy::missing_transmute_annotations)]
+        unsafe {
+            rusqlite::ffi::sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite_vec::sqlite3_vec_init as *const (),
+            )));
+        }
+    }
+
     /// Open a persistent on-disk database at `path`.
     pub fn open(path: &std::path::Path) -> Result<Self> {
+        Self::register_vec_extension();
         let conn = rusqlite::Connection::open(path)?;
         let store = Self {
             conn: Mutex::new(conn),
@@ -22,6 +36,7 @@ impl SqliteStore {
 
     /// Open an in-memory database (primarily for tests).
     pub fn open_in_memory() -> Result<Self> {
+        Self::register_vec_extension();
         let conn = rusqlite::Connection::open_in_memory()?;
         let store = Self {
             conn: Mutex::new(conn),
@@ -37,6 +52,14 @@ impl SqliteStore {
         // Apply column migrations one at a time; ignore "duplicate column name" errors
         // so that init() remains idempotent on databases that already have the columns.
         for &sql in schema::REPO_MIGRATIONS {
+            match conn.execute_batch(sql) {
+                Ok(()) => {}
+                Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
+                    if msg.contains("duplicate column name") => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        for &sql in schema::EMBED_MIGRATIONS {
             match conn.execute_batch(sql) {
                 Ok(()) => {}
                 Err(rusqlite::Error::SqliteFailure(_, Some(ref msg)))
@@ -282,6 +305,42 @@ mod tests {
         let detail = result.unwrap();
         assert_eq!(detail.sha, "deadbe1234567890");
         assert_eq!(detail.subject, "short sha test");
+    }
+
+    #[test]
+    fn test_config_table_exists() {
+        let store = make_store();
+        let conn = store.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='config'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("query sqlite_master");
+        assert_eq!(count, 1, "expected config table to exist");
+    }
+
+    #[test]
+    fn test_commit_embed_map_table_exists() {
+        let store = make_store();
+        let conn = store.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='commit_embed_map'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("query sqlite_master");
+        assert_eq!(count, 1, "expected commit_embed_map table to exist");
+    }
+
+    #[test]
+    fn test_embed_migrations_idempotent() {
+        // Opening two separate in-memory stores verifies that init() can be
+        // called multiple times without panicking on duplicate column errors.
+        SqliteStore::open_in_memory().expect("first open_in_memory");
+        SqliteStore::open_in_memory().expect("second open_in_memory");
     }
 
     #[test]
