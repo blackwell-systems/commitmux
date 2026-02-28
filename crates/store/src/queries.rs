@@ -3,8 +3,8 @@ use std::sync::MutexGuard;
 
 use commitmux_types::{
     Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, IngestState,
-    PatchResult, Repo, RepoInput, RepoStats, Result, SearchOpts, SearchResult, Store, TouchOpts,
-    TouchResult,
+    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
+    SearchResult, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -18,6 +18,9 @@ fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
         remote_url: row.get(3)?,
         default_branch: row.get(4)?,
+        fork_of: None,
+        author_filter: None,
+        exclude_prefixes: vec![],
     })
 }
 
@@ -44,6 +47,9 @@ impl Store for SqliteStore {
             local_path: input.local_path.clone(),
             remote_url: input.remote_url.clone(),
             default_branch: input.default_branch.clone(),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
         })
     }
 
@@ -67,6 +73,28 @@ impl Store for SqliteStore {
             )
             .optional()?;
         Ok(result)
+    }
+
+    fn remove_repo(&self, _name: &str) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn update_repo(&self, _repo_id: i64, _update: &RepoUpdate) -> Result<Repo> {
+        unimplemented!()
+    }
+
+    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
+        unimplemented!()
+    }
+
+    fn commit_exists(&self, repo_id: i64, sha: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM commits WHERE repo_id = ?1 AND sha = ?2",
+            params![repo_id, sha],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     // ── Ingest writes ─────────────────────────────────────────────────────
@@ -325,6 +353,7 @@ impl Store for SqliteStore {
             .chain(bind_vals.iter().map(|b| b.as_ref()))
             .collect();
 
+        #[allow(clippy::type_complexity)]
         let rows: rusqlite::Result<Vec<(i64, String, String, String, i64, String, String)>> =
             stmt.query_map(all_params.as_slice(), |row| {
                 Ok((
