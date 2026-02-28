@@ -5,11 +5,14 @@ PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS repos (
-    repo_id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL UNIQUE,
-    local_path    TEXT NOT NULL,
-    remote_url    TEXT,
-    default_branch TEXT
+    repo_id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name             TEXT NOT NULL UNIQUE,
+    local_path       TEXT NOT NULL,
+    remote_url       TEXT,
+    default_branch   TEXT,
+    fork_of          TEXT,
+    author_filter    TEXT,
+    exclude_prefixes TEXT
 );
 
 CREATE TABLE IF NOT EXISTS commits (
