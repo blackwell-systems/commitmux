@@ -78,6 +78,19 @@ impl commitmux_types::Ingester for Git2Ingester {
             }
         }
 
+        // Construct effective_config: merge persisted exclude_prefixes from Repo
+        let effective_config = if repo.exclude_prefixes.is_empty() {
+            config.clone()
+        } else {
+            let mut merged = config.clone();
+            for p in &repo.exclude_prefixes {
+                if !merged.path_prefixes.contains(p) {
+                    merged.path_prefixes.push(p.clone());
+                }
+            }
+            merged
+        };
+
         // Resolve the tip commit
         let tip_commit = resolve_tip(&git_repo, repo)?;
         let tip_oid = tip_commit.id();
@@ -94,6 +107,84 @@ impl commitmux_types::Ingester for Git2Ingester {
         revwalk
             .set_sorting(git2::Sort::TOPOLOGICAL | git2::Sort::REVERSE)
             .map_err(|e| CommitmuxError::Ingest(e.message().to_string()))?;
+
+        // Fork-of upstream exclusion: hide commits reachable from upstream
+        if let Some(ref upstream_url) = repo.fork_of {
+            // Step 1: ensure "upstream" remote exists with correct URL
+            let needs_create = match git_repo.find_remote("upstream") {
+                Ok(existing) => {
+                    let existing_url = existing.url().unwrap_or("").to_string();
+                    if existing_url != upstream_url.as_str() {
+                        // Wrong URL — update it
+                        if let Err(e) = git_repo.remote_set_url("upstream", upstream_url) {
+                            summary.errors.push(format!(
+                                "Warning: failed to update upstream remote URL: {}", e.message()
+                            ));
+                        }
+                    }
+                    false
+                }
+                Err(_) => true,
+            };
+
+            if needs_create {
+                if let Err(e) = git_repo.remote("upstream", upstream_url) {
+                    summary.errors.push(format!(
+                        "Warning: failed to add upstream remote: {}", e.message()
+                    ));
+                    // Skip fork-of logic entirely
+                }
+            }
+
+            // Step 2: fetch upstream (non-fatal)
+            if let Ok(mut remote) = git_repo.find_remote("upstream") {
+                let mut callbacks = git2::RemoteCallbacks::new();
+                callbacks.credentials(|_url, username, _allowed| {
+                    git2::Cred::ssh_key_from_agent(username.unwrap_or("git"))
+                });
+                let mut fo = git2::FetchOptions::new();
+                fo.remote_callbacks(callbacks);
+                if let Err(e) = remote.fetch::<&str>(&[], Some(&mut fo), None) {
+                    summary.errors.push(format!(
+                        "Warning: failed to fetch upstream: {}", e.message()
+                    ));
+                }
+            }
+
+            // Step 3: resolve upstream tip (try HEAD, main, master)
+            let upstream_tip = ["refs/remotes/upstream/HEAD",
+                                "refs/remotes/upstream/main",
+                                "refs/remotes/upstream/master"]
+                .iter()
+                .find_map(|refname| {
+                    git_repo.revparse_single(refname)
+                        .ok()
+                        .and_then(|obj| obj.peel_to_commit().ok())
+                });
+
+            if let Some(upstream_commit) = upstream_tip {
+                // Step 4: find merge base and hide upstream commits from walk
+                match git_repo.merge_base(tip_oid, upstream_commit.id()) {
+                    Ok(base_oid) => {
+                        if let Err(e) = revwalk.hide(base_oid) {
+                            summary.errors.push(format!(
+                                "Warning: failed to hide upstream commits: {}", e.message()
+                            ));
+                        }
+                    }
+                    Err(e) => {
+                        summary.errors.push(format!(
+                            "Warning: no merge base with upstream ({}): {}",
+                            upstream_url, e.message()
+                        ));
+                    }
+                }
+            } else {
+                summary.errors.push(format!(
+                    "Warning: could not resolve upstream tip for '{}'", upstream_url
+                ));
+            }
+        }
 
         // Walk commits
         for oid_result in revwalk {
@@ -122,6 +213,21 @@ impl commitmux_types::Ingester for Git2Ingester {
             };
 
             let sha = oid.to_string();
+
+            // Skip commits already in the store (incremental skip)
+            match store.commit_exists(repo.repo_id, &sha) {
+                Ok(true) => {
+                    summary.commits_skipped += 1;
+                    continue;
+                }
+                Ok(false) => { /* proceed */ }
+                Err(e) => {
+                    summary.errors.push(format!(
+                        "Warning: failed to check commit existence for {}: {}", sha, e
+                    ));
+                    // Proceed to index it anyway (conservative)
+                }
+            }
 
             // Extract commit metadata
             let author = git_commit.author();
@@ -153,6 +259,14 @@ impl commitmux_types::Ingester for Git2Ingester {
                 parent_count: git_commit.parent_count() as u32,
             };
 
+            // Author filter: skip commits not matching the configured author email
+            if let Some(ref filter_email) = repo.author_filter {
+                if !commit.author_email.eq_ignore_ascii_case(filter_email) {
+                    summary.commits_skipped += 1;
+                    continue;
+                }
+            }
+
             // Upsert commit
             if let Err(e) = store.upsert_commit(&commit) {
                 summary
@@ -163,7 +277,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             }
 
             // Get changed files
-            match patch::get_commit_files(&git_repo, &git_commit, repo.repo_id, config) {
+            match patch::get_commit_files(&git_repo, &git_commit, repo.repo_id, &effective_config) {
                 Ok(files) => {
                     if let Err(e) = store.upsert_commit_files(&files) {
                         summary.errors.push(format!(
@@ -181,7 +295,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             }
 
             // Get and store patch text
-            match patch::get_patch_text(&git_repo, &git_commit, config) {
+            match patch::get_patch_text(&git_repo, &git_commit, &effective_config) {
                 Ok(Some(text)) => {
                     let preview_len = text.floor_char_boundary(500);
                     let patch_preview = text[..preview_len].to_string();
