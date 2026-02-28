@@ -660,3 +660,54 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 **Out-of-scope files:**
 
 - `Cargo.toml` (worktree root) — created as a minimal temporary workspace (`members = ["crates/types"]`, `resolver = "2"`) solely to satisfy the `cargo -p commitmux-types` verification gate. Wave 2 Agent E must replace this with the full workspace Cargo.toml that includes all crates.
+
+### Agent B — Completion Report
+
+**Isolation verification:**
+
+The `pwd` command returned `/workspace/code/commitmux` due to environment path remapping (symlink/container mapping), but the actual worktree path `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave1-agent-B` is fully accessible. Confirmed: worktree exists in `git worktree list`, current branch is `wave1-agent-B`. All file operations performed exclusively within `crates/store/` and the workspace root `Cargo.toml`. Isolation maintained.
+
+**Files created/modified:**
+
+- `Cargo.toml` (workspace root) — updated `members` from `["crates/types"]` to `["crates/types", "crates/store"]`
+- `crates/store/Cargo.toml` — new package `commitmux-store` v0.1.0
+- `crates/store/src/lib.rs` — `SqliteStore` struct + `open`/`open_in_memory` constructors + 4 unit tests
+- `crates/store/src/schema.rs` — `SCHEMA_SQL` constant with all DDL
+- `crates/store/src/queries.rs` — full `Store` trait implementation
+
+**Build status:**
+
+```
+cargo build -p commitmux-store
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.82s
+```
+
+Build succeeded cleanly with zero warnings after cleanup.
+
+**Test results:**
+
+```
+cargo test -p commitmux-store
+running 4 tests
+test tests::test_add_repo_and_list ... ok
+test tests::test_upsert_commit_idempotent ... ok
+test tests::test_search_fts ... ok
+test tests::test_get_patch_roundtrip ... ok
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+```
+
+All 4 tests pass.
+
+**Deviations from spec:**
+
+1. **FTS approach: manual management instead of trigger.** The spec described an AFTER INSERT trigger for FTS sync but then noted that manual FTS management would be simpler when `upsert_patch` needs to update `patch_preview`. Chosen approach: no trigger; `upsert_commit` and `upsert_patch` both manually issue FTS `delete` + fresh insert commands. This avoids trigger-vs-manual conflicts and correctly handles the two-phase write (commit first, then patch).
+
+2. **`CommitPatch.patch_blob` semantics clarified.** The spec mentioned `zstd::encode_all(patch_text.as_bytes(), 3)` but the `CommitPatch` struct has a `patch_blob: Vec<u8>` field. The implementation treats `patch_blob` as raw (uncompressed) bytes and compresses them inside `upsert_patch`. The `patch_preview` field on `CommitPatch` is used as-is for the FTS index (first 500 chars stored in `commits.patch_preview`).
+
+3. **`upsert_commit_files` delete scope.** The spec did not specify upsert semantics for commit_files. The implementation deletes all existing rows for `(repo_id, sha)` of the first file in the batch before re-inserting. This assumes all files for a given commit are always passed together in a single batch call (consistent with how an ingester would call it).
+
+4. **Schema deviations:** `patch_preview` column is on the `commits` table as specified. `commit_patches.patch_blob` stores zstd-compressed bytes. All table and index definitions match the spec exactly.
+
+**FTS approach summary:**
+
+Manual FTS management (no trigger). `upsert_commit` inserts into `commits_fts` with empty `patch_preview`. `upsert_patch` performs FTS delete+reinsert to update `patch_preview` in the index. The FTS table is `content='commits', content_rowid='rowid'` over columns `subject`, `body`, `patch_preview`.
