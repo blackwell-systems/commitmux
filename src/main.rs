@@ -8,7 +8,7 @@ use commitmux_store::SqliteStore;
 use commitmux_types::{IgnoreConfig, Ingester, RepoInput, RepoUpdate, Store};
 
 #[derive(Parser)]
-#[command(name = "commitmux", about = "Cross-repo git history index for AI agents")]
+#[command(name = "commitmux", about = "Cross-repo git history index for AI agents", version)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -16,62 +16,71 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(about = "Initialize the commitmux database")]
     Init {
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Add a git repository to the index")]
     AddRepo {
-        #[arg(conflicts_with = "url")]
+        #[arg(conflicts_with = "url", help = "Local path to a git repository")]
         path: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(long, help = "Override the repo name (default: directory name)")]
         name: Option<String>,
-        #[arg(long = "exclude")]
+        #[arg(long = "exclude", help = "Path prefix to exclude from indexing (repeatable)")]
         exclude: Vec<String>,
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
-        #[arg(conflicts_with = "path", long)]
+        #[arg(conflicts_with = "path", long, help = "Remote git URL to clone and index")]
         url: Option<String>,
-        #[arg(long = "fork-of")]
+        #[arg(long = "fork-of", help = "Upstream repo URL; only index commits not in upstream")]
         fork_of: Option<String>,
-        #[arg(long = "author")]
+        #[arg(long = "author", help = "Only index commits by this author (email match)")]
         author: Option<String>,
     },
+    #[command(about = "Remove a repository and all its indexed commits")]
     RemoveRepo {
         name: String,
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Update stored metadata for a repository")]
     UpdateRepo {
         name: String,
-        #[arg(long = "fork-of")]
+        #[arg(long = "fork-of", help = "Upstream repo URL; only index commits not in upstream")]
         fork_of: Option<String>,
-        #[arg(long = "author")]
+        #[arg(long = "author", help = "Only index commits by this author (email match)")]
         author: Option<String>,
-        #[arg(long = "exclude")]
+        #[arg(long = "exclude", help = "Path prefix to exclude from indexing (repeatable)")]
         exclude: Vec<String>,
-        #[arg(long = "default-branch")]
+        #[arg(long = "default-branch", help = "Set the default branch name")]
         default_branch: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Index new commits from one or all repositories")]
     Sync {
-        #[arg(long)]
+        #[arg(long, help = "Sync only this repo (default: sync all)")]
         repo: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Show full details for a specific commit (JSON output)")]
     Show {
         repo: String,
+        #[arg(help = "Full or prefix SHA of the commit")]
         sha: String,
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Show all indexed repositories with commit counts and sync times")]
     Status {
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
+    #[command(about = "Start the MCP JSON-RPC server for AI agent access")]
     Serve {
-        #[arg(long)]
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
 }
@@ -114,9 +123,24 @@ fn format_timestamp(ts: i64) -> String {
     let y = if m <= 2 { y + 1 } else { y };
 
     format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
         y, m, d, hours, minutes, seconds
     )
+}
+
+fn validate_git_url(url: &str) -> Result<()> {
+    if !url.starts_with("https://")
+        && !url.starts_with("http://")
+        && !url.starts_with("git@")
+        && !url.starts_with("git://")
+        && !url.starts_with("ssh://")
+    {
+        anyhow::bail!(
+            "'{}' is not a valid git URL (expected https://, http://, git@, git://, or ssh://)",
+            url
+        );
+    }
+    Ok(())
 }
 
 fn main() -> Result<()> {
@@ -129,9 +153,14 @@ fn main() -> Result<()> {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
             }
+            let already_exists = db_path.exists();
             SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
-            println!("Initialized commitmux database at {}", db_path.display());
+            if already_exists {
+                println!("Database already initialized at {}", db_path.display());
+            } else {
+                println!("Initialized commitmux database at {}", db_path.display());
+            }
         }
 
         Commands::AddRepo { path, name, exclude, db, url, fork_of, author } => {
@@ -140,6 +169,9 @@ fn main() -> Result<()> {
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
             if let Some(remote_url) = url {
+                // Validate URL scheme before attempting clone
+                validate_git_url(&remote_url)?;
+
                 // URL-based ingestion: derive name from URL basename, clone repo
                 let derived_name = remote_url
                     .trim_end_matches('/')
@@ -181,13 +213,26 @@ fn main() -> Result<()> {
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
                 })
-                .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
+                .map_err(|e| {
+                    if e.to_string().contains("UNIQUE constraint") {
+                        anyhow::anyhow!(
+                            "A repo named '{}' already exists. Use 'commitmux status' to see all repos.",
+                            repo_name
+                        )
+                    } else {
+                        e.into()
+                    }
+                })?;
 
                 println!("Added repo '{}' at {}", repo_name, clone_dir.display());
             } else if let Some(local_path) = path {
                 // Local path ingestion
                 let canonical = local_path.canonicalize()
                     .with_context(|| format!("Failed to canonicalize path: {}", local_path.display()))?;
+
+                // Verify the path is a git repository
+                git2::Repository::open(&canonical)
+                    .with_context(|| format!("'{}' is not a git repository", canonical.display()))?;
 
                 let repo_name = match name {
                     Some(n) => n,
@@ -207,7 +252,16 @@ fn main() -> Result<()> {
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
                 })
-                .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
+                .map_err(|e| {
+                    if e.to_string().contains("UNIQUE constraint") {
+                        anyhow::anyhow!(
+                            "A repo named '{}' already exists. Use 'commitmux status' to see all repos.",
+                            repo_name
+                        )
+                    } else {
+                        e.into()
+                    }
+                })?;
 
                 println!("Added repo '{}' at {}", repo_name, canonical.display());
             } else {
@@ -220,28 +274,35 @@ fn main() -> Result<()> {
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
-            // Get repo path before removing (to clean up managed clone)
-            let local_path = store
+            // Get repo info before removing (for commit count and managed clone cleanup)
+            let repo = store
                 .get_repo_by_name(&name)
                 .with_context(|| format!("Failed to look up repo '{}'", name))?
-                .map(|r| r.local_path);
+                .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found", name))?;
+
+            let local_path = repo.local_path.clone();
+
+            // Get commit count before deletion
+            let count = store.count_commits_for_repo(repo.repo_id).unwrap_or(0);
 
             store.remove_repo(&name)
                 .with_context(|| format!("Failed to remove repo '{}'", name))?;
 
-            println!("Removed repo '{}'", name);
+            if count > 0 {
+                println!("Removed repo '{}' ({} commits deleted from index)", name, count);
+            } else {
+                println!("Removed repo '{}'", name);
+            }
 
             // Clean up managed clone if under ~/.commitmux/clones/
-            if let Some(lp) = local_path {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                let clones_dir = PathBuf::from(&home).join(".commitmux").join("clones");
-                if lp.starts_with(&clones_dir) {
-                    match std::fs::remove_dir_all(&lp) {
-                        Ok(_) => println!("Removed managed clone at {}", lp.display()),
-                        Err(e) => eprintln!(
-                            "Warning: failed to remove clone at {}: {}", lp.display(), e
-                        ),
-                    }
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            let clones_dir = PathBuf::from(&home).join(".commitmux").join("clones");
+            if local_path.starts_with(&clones_dir) {
+                match std::fs::remove_dir_all(&local_path) {
+                    Ok(_) => println!("Removed managed clone at {}", local_path.display()),
+                    Err(e) => eprintln!(
+                        "Warning: failed to remove clone at {}: {}", local_path.display(), e
+                    ),
                 }
             }
         }
@@ -294,23 +355,48 @@ fn main() -> Result<()> {
                 store.list_repos().context("Failed to list repos")?
             };
 
+            let mut any_error = false;
+            let mut total_indexed = 0usize;
+
             for r in &repos {
                 let ingester = Git2Ingester::new();
                 let config = IgnoreConfig::default();
                 match ingester.sync_repo(r, &store, &config) {
                     Ok(summary) => {
-                        println!(
-                            "Syncing '{}'... {} commits indexed, {} already-indexed, {} filtered",
-                            r.name, summary.commits_indexed, summary.commits_already_indexed, summary.commits_filtered
-                        );
+                        if summary.commits_filtered > 0 {
+                            println!(
+                                "Syncing '{}'... {} indexed, {} already indexed, {} filtered by author",
+                                r.name,
+                                summary.commits_indexed,
+                                summary.commits_already_indexed,
+                                summary.commits_filtered
+                            );
+                        } else {
+                            println!(
+                                "Syncing '{}'... {} indexed, {} already indexed",
+                                r.name,
+                                summary.commits_indexed,
+                                summary.commits_already_indexed
+                            );
+                        }
                         for err in &summary.errors {
                             eprintln!("  warning: {}", err);
                         }
+                        total_indexed += summary.commits_indexed;
                     }
                     Err(e) => {
                         eprintln!("Error syncing '{}': {}", r.name, e);
+                        any_error = true;
                     }
                 }
+            }
+
+            if any_error {
+                std::process::exit(1);
+            }
+
+            if total_indexed > 0 {
+                println!("Tip: run 'commitmux serve' to expose this index via MCP to AI agents.");
             }
         }
 
@@ -321,7 +407,7 @@ fn main() -> Result<()> {
 
             match store.get_commit(&repo, &sha).context("Failed to get commit")? {
                 None => {
-                    eprintln!("Commit not found");
+                    eprintln!("Commit '{}' not found in repo '{}'", sha, repo);
                     std::process::exit(1);
                 }
                 Some(detail) => {
@@ -339,19 +425,49 @@ fn main() -> Result<()> {
 
             let repos = store.list_repos().context("Failed to list repos")?;
 
-            println!("{:<20} {:>8}  LAST SYNCED", "REPO", "COMMITS");
+            if repos.is_empty() {
+                println!("No repositories indexed.");
+                println!("Run: commitmux add-repo <path>");
+                return Ok(());
+            }
+
+            println!("{:<20} {:>8}  {:<45}  {}", "REPO", "COMMITS", "SOURCE", "LAST SYNCED");
             for r in &repos {
+                // Determine source display: remote URL if present, else truncated local path
+                let source = if let Some(ref url) = r.remote_url {
+                    url.clone()
+                } else {
+                    let path_str = r.local_path.display().to_string();
+                    if path_str.len() > 43 {
+                        format!("{}...", &path_str[..43])
+                    } else {
+                        path_str
+                    }
+                };
+
                 match store.repo_stats(r.repo_id).with_context(|| format!("Failed to get stats for '{}'", r.name)) {
                     Ok(stats) => {
                         let last_synced = stats
                             .last_synced_at
                             .map(format_timestamp)
                             .unwrap_or_else(|| "never".to_string());
-                        println!("{:<20} {:>8}  {}", r.name, stats.commit_count, last_synced);
+                        println!("{:<20} {:>8}  {:<45}  {}", r.name, stats.commit_count, source, last_synced);
                     }
                     Err(e) => {
                         eprintln!("Error fetching stats for '{}': {}", r.name, e);
                     }
+                }
+
+                // Show active filters if any
+                if r.author_filter.is_some() || !r.exclude_prefixes.is_empty() {
+                    let mut parts = Vec::new();
+                    if let Some(ref author) = r.author_filter {
+                        parts.push(format!("author={}", author));
+                    }
+                    if !r.exclude_prefixes.is_empty() {
+                        parts.push(format!("exclude=[{}]", r.exclude_prefixes.join(", ")));
+                    }
+                    println!("  filters: {}", parts.join(", "));
                 }
             }
         }
@@ -370,6 +486,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use commitmux_store::SqliteStore;
     use commitmux_types::{RepoInput, Store};
 
@@ -411,5 +528,46 @@ mod tests {
 
         let repo = store.get_repo_by_name("myrepo").expect("get").expect("some");
         assert_eq!(repo.exclude_prefixes, vec!["dist/", "vendor/"]);
+    }
+
+    #[test]
+    fn test_format_timestamp_includes_utc() {
+        // 2024-01-15 12:34:56 UTC = 1705318496
+        let ts = 1705318496i64;
+        let result = format_timestamp(ts);
+        assert!(
+            result.ends_with(" UTC"),
+            "format_timestamp should end with ' UTC', got: {}",
+            result
+        );
+        // Verify it's a non-trivial formatted string
+        assert!(result.len() > 4, "timestamp should be more than just ' UTC'");
+    }
+
+    #[test]
+    fn test_url_validation_rejects_bare_string() {
+        let result = validate_git_url("not-a-url");
+        assert!(result.is_err(), "bare string should fail URL validation");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("not a valid git URL"),
+            "error should mention invalid git URL, got: {}",
+            err_msg
+        );
+    }
+
+    #[test]
+    fn test_url_validation_accepts_https() {
+        assert!(validate_git_url("https://github.com/user/repo").is_ok());
+    }
+
+    #[test]
+    fn test_url_validation_accepts_git_at() {
+        assert!(validate_git_url("git@github.com:user/repo.git").is_ok());
+    }
+
+    #[test]
+    fn test_url_validation_accepts_ssh() {
+        assert!(validate_git_url("ssh://git@github.com/user/repo.git").is_ok());
     }
 }
