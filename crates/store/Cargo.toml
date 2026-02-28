@@ -1,0 +1,10 @@
+[package]
+name = "commitmux-store"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+commitmux-types = { path = "../types" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+zstd = "0.13"
+serde_json = "1"
