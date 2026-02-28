@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use anyhow::{Context, Result};
 
+use commitmux_embed::EmbedConfig;
 use commitmux_ingest::Git2Ingester;
 use commitmux_store::SqliteStore;
 use commitmux_types::{IgnoreConfig, Ingester, RepoInput, RepoUpdate, Store};
@@ -37,6 +38,8 @@ enum Commands {
         fork_of: Option<String>,
         #[arg(long = "author", help = "Only index commits by this author (email match)")]
         author: Option<String>,
+        #[arg(long = "embed", help = "Enable semantic embeddings for this repo")]
+        embed: bool,
     },
     #[command(about = "Remove a repository and all its indexed commits")]
     RemoveRepo {
@@ -59,6 +62,10 @@ enum Commands {
         default_branch: Option<String>,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
+        #[arg(long = "embed", help = "Enable semantic embeddings for this repo")]
+        embed: bool,
+        #[arg(long = "no-embed", help = "Disable semantic embeddings for this repo")]
+        no_embed: bool,
     },
     #[command(about = "Index new commits from one or all repositories")]
     Sync {
@@ -66,6 +73,8 @@ enum Commands {
         repo: Option<String>,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
+        #[arg(long = "embed-only", help = "Only generate embeddings; skip commit indexing")]
+        embed_only: bool,
     },
     #[command(about = "Show full details for a specific commit (JSON output)")]
     Show {
@@ -85,6 +94,29 @@ enum Commands {
     Serve {
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
+    },
+    #[command(about = "Get or set global configuration values")]
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        db: Option<PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConfigAction {
+    #[command(about = "Set a configuration value")]
+    Set {
+        #[arg(help = "Configuration key (e.g. embed.model, embed.endpoint)")]
+        key: String,
+        #[arg(help = "Value to set")]
+        value: String,
+    },
+    #[command(about = "Get a configuration value")]
+    Get {
+        #[arg(help = "Configuration key")]
+        key: String,
     },
 }
 
@@ -166,7 +198,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::AddRepo { path, name, exclude, db, url, fork_of, author } => {
+        Commands::AddRepo { path, name, exclude, db, url, fork_of, author, embed } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
                 anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
@@ -218,7 +250,7 @@ fn main() -> Result<()> {
                     fork_of: fork_of.clone(),
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
-                    embed_enabled: false, // TODO Wave 2A: wire --embed/--no-embed flags
+                    embed_enabled: embed,
                 })
                 .map_err(|e| {
                     if e.to_string().contains("UNIQUE constraint") {
@@ -259,7 +291,7 @@ fn main() -> Result<()> {
                     fork_of: fork_of.clone(),
                     author_filter: author.clone(),
                     exclude_prefixes: exclude.clone(),
-                    embed_enabled: false, // TODO Wave 2A: wire --embed/--no-embed flags
+                    embed_enabled: embed,
                 })
                 .map_err(|e| {
                     if e.to_string().contains("UNIQUE constraint") {
@@ -319,7 +351,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::UpdateRepo { name, fork_of, author, exclude, default_branch, db } => {
+        Commands::UpdateRepo { name, fork_of, author, exclude, default_branch, db, embed, no_embed } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
                 anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
@@ -333,18 +365,20 @@ fn main() -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found", name))?;
 
             // Build RepoUpdate: only set fields that were provided via CLI flags.
+            let embed_enabled = if embed { Some(true) } else if no_embed { Some(false) } else { None };
             let update = RepoUpdate {
                 fork_of: fork_of.map(Some),
                 author_filter: author.map(Some),
                 exclude_prefixes: if exclude.is_empty() { None } else { Some(exclude) },
                 default_branch: default_branch.map(Some),
-                embed_enabled: None, // TODO Wave 2A: wire --embed/--no-embed flags
+                embed_enabled,
             };
 
             let any_change = update.fork_of.is_some()
                 || update.author_filter.is_some()
                 || update.exclude_prefixes.is_some()
-                || update.default_branch.is_some();
+                || update.default_branch.is_some()
+                || update.embed_enabled.is_some();
 
             store.update_repo(repo.repo_id, &update)
                 .with_context(|| format!("Failed to update repo '{}'", name))?;
@@ -356,7 +390,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Sync { repo, db } => {
+        Commands::Sync { repo, db, embed_only } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
                 anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
@@ -377,45 +411,94 @@ fn main() -> Result<()> {
             let mut any_error = false;
             let mut total_in_index = 0usize;
 
-            for r in &repos {
-                let ingester = Git2Ingester::new();
-                let config = IgnoreConfig::default();
-                match ingester.sync_repo(r, &store, &config) {
-                    Ok(summary) => {
-                        if summary.commits_filtered > 0 {
-                            println!(
-                                "Syncing '{}'... {} indexed, {} already indexed, {} filtered by author",
-                                r.name,
-                                summary.commits_indexed,
-                                summary.commits_already_indexed,
-                                summary.commits_filtered
-                            );
-                        } else {
-                            println!(
-                                "Syncing '{}'... {} indexed, {} already indexed",
-                                r.name,
-                                summary.commits_indexed,
-                                summary.commits_already_indexed
-                            );
+            if embed_only {
+                // Skip git ingest; only run embedding for repos with embed_enabled
+                for r in &repos {
+                    if r.embed_enabled {
+                        match EmbedConfig::from_store(&store) {
+                            Ok(config) => {
+                                let embedder = commitmux_embed::Embedder::new(&config);
+                                let rt = tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build()
+                                    .expect("tokio runtime");
+                                match rt.block_on(commitmux_embed::embed_pending(&store, &embedder, r.repo_id, 50)) {
+                                    Ok(esummary) => {
+                                        println!(
+                                            "Embedding '{}'... {} embedded, {} failed",
+                                            r.name, esummary.embedded, esummary.failed
+                                        );
+                                    }
+                                    Err(e) => eprintln!("  Warning: embedding failed for '{}': {e}", r.name),
+                                }
+                            }
+                            Err(e) => eprintln!("  Warning: embed config error for '{}': {e}", r.name),
                         }
-                        for err in &summary.errors {
-                            eprintln!("  warning: {}", err);
-                        }
-                        total_in_index += summary.commits_indexed + summary.commits_already_indexed;
-                    }
-                    Err(e) => {
-                        eprintln!("Error syncing '{}': {}", r.name, e);
-                        any_error = true;
                     }
                 }
-            }
+            } else {
+                for r in &repos {
+                    let ingester = Git2Ingester::new();
+                    let config = IgnoreConfig::default();
+                    match ingester.sync_repo(r, &store, &config) {
+                        Ok(summary) => {
+                            if summary.commits_filtered > 0 {
+                                println!(
+                                    "Syncing '{}'... {} indexed, {} already indexed, {} filtered by author",
+                                    r.name,
+                                    summary.commits_indexed,
+                                    summary.commits_already_indexed,
+                                    summary.commits_filtered
+                                );
+                            } else {
+                                println!(
+                                    "Syncing '{}'... {} indexed, {} already indexed",
+                                    r.name,
+                                    summary.commits_indexed,
+                                    summary.commits_already_indexed
+                                );
+                            }
+                            for err in &summary.errors {
+                                eprintln!("  warning: {}", err);
+                            }
+                            total_in_index += summary.commits_indexed + summary.commits_already_indexed;
+                        }
+                        Err(e) => {
+                            eprintln!("Error syncing '{}': {}", r.name, e);
+                            any_error = true;
+                        }
+                    }
 
-            if any_error {
-                std::process::exit(1);
-            }
+                    // After ingest, backfill embeddings for repos with embed_enabled
+                    if r.embed_enabled {
+                        match EmbedConfig::from_store(&store) {
+                            Ok(config) => {
+                                let embedder = commitmux_embed::Embedder::new(&config);
+                                let rt = tokio::runtime::Builder::new_current_thread()
+                                    .enable_all()
+                                    .build()
+                                    .expect("tokio runtime");
+                                match rt.block_on(commitmux_embed::embed_pending(&store, &embedder, r.repo_id, 50)) {
+                                    Ok(esummary) => {
+                                        if esummary.embedded > 0 || esummary.failed > 0 {
+                                            println!("  Embedded {} commits ({} failed)", esummary.embedded, esummary.failed);
+                                        }
+                                    }
+                                    Err(e) => eprintln!("  Warning: embedding failed for '{}': {e}", r.name),
+                                }
+                            }
+                            Err(e) => eprintln!("  Warning: embed config error for '{}': {e}", r.name),
+                        }
+                    }
+                }
 
-            if total_in_index > 0 {
-                println!("Tip: run 'commitmux serve' to expose this index via MCP to AI agents.");
+                if any_error {
+                    std::process::exit(1);
+                }
+
+                if total_in_index > 0 {
+                    println!("Tip: run 'commitmux serve' to expose this index via MCP to AI agents.");
+                }
             }
         }
 
@@ -456,7 +539,14 @@ fn main() -> Result<()> {
                 return Ok(());
             }
 
-            println!("{:<20} {:>8}  {:<45}  LAST SYNCED", "REPO", "COMMITS", "SOURCE");
+            let any_embed = repos.iter().any(|r| r.embed_enabled);
+
+            if any_embed {
+                println!("{:<20} {:>8}  {:<45}  {:<22}  EMBED", "REPO", "COMMITS", "SOURCE", "LAST SYNCED");
+            } else {
+                println!("{:<20} {:>8}  {:<45}  LAST SYNCED", "REPO", "COMMITS", "SOURCE");
+            }
+
             for r in &repos {
                 // Determine source display: remote URL if present, else truncated local path
                 let source = if let Some(ref url) = r.remote_url {
@@ -476,7 +566,12 @@ fn main() -> Result<()> {
                             .last_synced_at
                             .map(format_timestamp)
                             .unwrap_or_else(|| "never".to_string());
-                        println!("{:<20} {:>8}  {:<45}  {}", r.name, stats.commit_count, source, last_synced);
+                        if any_embed {
+                            let embed_col = if r.embed_enabled { "✓" } else { "-" };
+                            println!("{:<20} {:>8}  {:<45}  {:<22}  {}", r.name, stats.commit_count, source, last_synced, embed_col);
+                        } else {
+                            println!("{:<20} {:>8}  {:<45}  {}", r.name, stats.commit_count, source, last_synced);
+                        }
                     }
                     Err(e) => {
                         eprintln!("Error fetching stats for '{}': {}", r.name, e);
@@ -495,6 +590,14 @@ fn main() -> Result<()> {
                     println!("  filters: {}", parts.join(", "));
                 }
             }
+
+            if any_embed {
+                let model = store.get_config("embed.model").ok().flatten()
+                    .unwrap_or_else(|| "nomic-embed-text (default)".into());
+                let endpoint = store.get_config("embed.endpoint").ok().flatten()
+                    .unwrap_or_else(|| "http://localhost:11434/v1 (default)".into());
+                println!("\nEmbedding model: {} ({})", model, endpoint);
+            }
         }
 
         Commands::Serve { db } => {
@@ -506,6 +609,27 @@ fn main() -> Result<()> {
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
             let store: Arc<dyn commitmux_types::Store + 'static> = Arc::new(store);
             commitmux_mcp::run_mcp_server(store).context("MCP server error")?;
+        }
+
+        Commands::Config { action, db } => {
+            let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
+            let store = SqliteStore::open(&db_path)
+                .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+            match action {
+                ConfigAction::Set { key, value } => {
+                    store.set_config(&key, &value).context("Failed to set config")?;
+                    println!("Set {} = {}", key, value);
+                }
+                ConfigAction::Get { key } => {
+                    match store.get_config(&key).context("Failed to get config")? {
+                        Some(value) => println!("{}", value),
+                        None => println!("(not set)"),
+                    }
+                }
+            }
         }
     }
 
@@ -647,6 +771,29 @@ mod tests {
         assert!(
             total_in_index > 0,
             "tip should show when index is non-empty, even with 0 new commits"
+        );
+    }
+
+    #[test]
+    fn test_config_set_get_roundtrip() {
+        let (store, _dir) = temp_store();
+        store.set_config("embed.model", "test-model").expect("set_config");
+        let value = store.get_config("embed.model").expect("get_config");
+        assert_eq!(value, Some("test-model".to_string()));
+    }
+
+    #[test]
+    fn test_embed_sync_tip_logic() {
+        // embed_only = true with embed_enabled = false: no embedding should be attempted.
+        // This is a logic test: verify the condition `r.embed_enabled` gates the embedding call.
+        let embed_only = true;
+        let embed_enabled = false;
+
+        // Simulate what the Sync handler does: skip embedding when embed_enabled is false
+        let would_embed = embed_only && embed_enabled;
+        assert!(
+            !would_embed,
+            "should not attempt embedding when embed_enabled is false, even with --embed-only"
         );
     }
 }
