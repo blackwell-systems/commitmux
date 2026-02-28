@@ -661,6 +661,7 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 
 - `Cargo.toml` (worktree root) — created as a minimal temporary workspace (`members = ["crates/types"]`, `resolver = "2"`) solely to satisfy the `cargo -p commitmux-types` verification gate. Wave 2 Agent E must replace this with the full workspace Cargo.toml that includes all crates.
 
+<<<<<<< HEAD
 ### Agent B — Completion Report
 
 **Isolation verification:** PASSED. Confirmed on branch `wave1-agent-B`.
@@ -713,8 +714,8 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 
 **Build:** `cargo build -p commitmux-mcp` — clean.
 
-**Tests:** 7/7 passed (deserialization tests + protocol handler tests for initialize, tools/list, tools/call, not-found).
+**Tests:** 7/7 passed (deserialization + protocol handler tests for initialize, tools/list, tools/call, not-found).
 
-**Implementation choice:** Manual stdio JSON-RPC instead of rmcp — rmcp requires async/tokio and the protocol is simple enough that manual implementation is smaller and keeps `run_mcp_server` synchronous.
+**Implementation choice:** Manual stdio JSON-RPC instead of rmcp — rmcp requires tokio async; manual approach is smaller, synchronous, and has no extra deps. Handles: initialize, notifications/initialized, tools/list, tools/call (isError: true on tool errors), unknown methods (-32601), malformed JSON (skip).
 
 **Entry point:** `pub fn run_mcp_server(store: std::sync::Arc<dyn commitmux_types::Store + 'static>) -> anyhow::Result<()>`
