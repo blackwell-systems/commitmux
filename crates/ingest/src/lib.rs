@@ -120,6 +120,10 @@ mod tests {
             Ok(0)
         }
 
+        fn count_embeddings_for_repo(&self, _repo_id: i64) -> Result<usize> {
+            Ok(0)
+        }
+
         fn get_config(&self, _key: &str) -> Result<Option<String>> { Ok(None) }
         fn set_config(&self, _key: &str, _value: &str) -> Result<()> { Ok(()) }
         fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> Result<Vec<EmbedCommit>> { Ok(vec![]) }

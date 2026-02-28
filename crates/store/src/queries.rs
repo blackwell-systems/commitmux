@@ -766,6 +766,16 @@ impl Store for SqliteStore {
         Ok(count as usize)
     }
 
+    fn count_embeddings_for_repo(&self, repo_id: i64) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM commit_embed_map WHERE repo_id = ?1",
+            params![repo_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     // ── Embedding support ─────────────────────────────────────────────────
 
     fn get_config(&self, key: &str) -> Result<Option<String>> {
@@ -1007,5 +1017,38 @@ mod tests {
         // 2026-02-28T15:34:55Z = 1772234095
         // Verify a known timestamp: 2000-01-01T00:00:00Z = 946684800
         assert_eq!(format_iso_date(946684800), "2000-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_count_embeddings_for_repo_zero_when_none_exist() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("embedcountrepo")).expect("add repo");
+
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000001", "commit 1", 1700000000)).expect("upsert 1");
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000002", "commit 2", 1700000001)).expect("upsert 2");
+
+        let count = store.count_embeddings_for_repo(repo.repo_id).expect("count_embeddings_for_repo");
+        assert_eq!(count, 0, "expected 0 embeddings when none exist");
+    }
+
+    #[test]
+    fn test_count_embeddings_for_repo_matches_stored_count() {
+        let store = make_store();
+        let mut repo_input = make_repo_input("embedcountrepo2");
+        repo_input.embed_enabled = true;
+        let repo = store.add_repo(&repo_input).expect("add repo");
+
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000003", "commit 1", 1700000000)).expect("upsert 1");
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000004", "commit 2", 1700000001)).expect("upsert 2");
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000005", "commit 3", 1700000002)).expect("upsert 3");
+
+        // Store embeddings for 3 commits
+        let embedding = vec![0.1f32; 768];
+        store.store_embedding(repo.repo_id, "sha0000000000003", "commit 1", "Test Author", "embedcountrepo2", 1700000000, Some("patch"), &embedding).expect("store embedding 1");
+        store.store_embedding(repo.repo_id, "sha0000000000004", "commit 2", "Test Author", "embedcountrepo2", 1700000001, Some("patch"), &embedding).expect("store embedding 2");
+        store.store_embedding(repo.repo_id, "sha0000000000005", "commit 3", "Test Author", "embedcountrepo2", 1700000002, Some("patch"), &embedding).expect("store embedding 3");
+
+        let count = store.count_embeddings_for_repo(repo.repo_id).expect("count_embeddings_for_repo");
+        assert_eq!(count, 3, "expected 3 embeddings to match stored count");
     }
 }

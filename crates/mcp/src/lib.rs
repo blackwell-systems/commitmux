@@ -468,6 +468,10 @@ mod tests {
             Ok(0)
         }
 
+        fn count_embeddings_for_repo(&self, _repo_id: i64) -> StoreResult<usize> {
+            Ok(0)
+        }
+
         fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
         fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
         fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
@@ -514,6 +518,7 @@ mod tests {
         fn get_patch(&self, _: &str, _: &str, _: Option<usize>) -> StoreResult<Option<PatchResult>> { unimplemented!() }
         fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> { unimplemented!() }
         fn count_commits_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
+        fn count_embeddings_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
         fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
         fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
         fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
