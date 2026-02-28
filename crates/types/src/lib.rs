@@ -298,6 +298,7 @@ pub trait Store: Send + Sync {
     // Admin
     fn repo_stats(&self, repo_id: i64) -> Result<RepoStats>;
     fn count_commits_for_repo(&self, repo_id: i64) -> Result<usize>;
+    fn count_embeddings_for_repo(&self, repo_id: i64) -> Result<usize>;
 
     // Embedding support
     fn get_config(&self, key: &str) -> Result<Option<String>>;

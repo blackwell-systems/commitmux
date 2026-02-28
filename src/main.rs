@@ -567,7 +567,17 @@ fn main() -> Result<()> {
                             .map(format_timestamp)
                             .unwrap_or_else(|| "never".to_string());
                         if any_embed {
-                            let embed_col = if r.embed_enabled { "✓" } else { "-" };
+                            let embed_col = if r.embed_enabled {
+                                let embedding_count = store.count_embeddings_for_repo(r.repo_id)
+                                    .unwrap_or(0);
+                                if embedding_count == stats.commit_count {
+                                    "✓"
+                                } else {
+                                    "⋯"
+                                }
+                            } else {
+                                "-"
+                            };
                             println!("{:<20} {:>8}  {:<45}  {:<22}  {}", r.name, stats.commit_count, source, last_synced, embed_col);
                         } else {
                             println!("{:<20} {:>8}  {:<45}  {}", r.name, stats.commit_count, source, last_synced);
@@ -596,7 +606,7 @@ fn main() -> Result<()> {
                     .unwrap_or_else(|| "nomic-embed-text (default)".into());
                 let endpoint = store.get_config("embed.endpoint").ok().flatten()
                     .unwrap_or_else(|| "http://localhost:11434/v1 (default)".into());
-                println!("\nEmbedding model: {} ({}) — ✓ = enabled", model, endpoint);
+                println!("\nEmbedding model: {} ({}) — ✓ = complete, ⋯ = pending", model, endpoint);
             }
         }
 
