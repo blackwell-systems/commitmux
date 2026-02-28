@@ -663,51 +663,58 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 
 ### Agent B — Completion Report
 
-**Isolation verification:**
-
-The `pwd` command returned `/workspace/code/commitmux` due to environment path remapping (symlink/container mapping), but the actual worktree path `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave1-agent-B` is fully accessible. Confirmed: worktree exists in `git worktree list`, current branch is `wave1-agent-B`. All file operations performed exclusively within `crates/store/` and the workspace root `Cargo.toml`. Isolation maintained.
+**Isolation verification:** PASSED. Confirmed on branch `wave1-agent-B`.
 
 **Files created/modified:**
-
-- `Cargo.toml` (workspace root) — updated `members` from `["crates/types"]` to `["crates/types", "crates/store"]`
+- `Cargo.toml` — updated members to include `crates/store`
 - `crates/store/Cargo.toml` — new package `commitmux-store` v0.1.0
-- `crates/store/src/lib.rs` — `SqliteStore` struct + `open`/`open_in_memory` constructors + 4 unit tests
-- `crates/store/src/schema.rs` — `SCHEMA_SQL` constant with all DDL
+- `crates/store/src/lib.rs` — `SqliteStore` + constructors + 4 unit tests
+- `crates/store/src/schema.rs` — `SCHEMA_SQL` with all DDL
 - `crates/store/src/queries.rs` — full `Store` trait implementation
 
-**Build status:**
+**Build:** `cargo build -p commitmux-store` — clean, no warnings.
 
-```
-cargo build -p commitmux-store
-Finished `dev` profile [unoptimized + debuginfo] target(s) in 20.82s
-```
+**Tests:** 4/4 passed (`test_add_repo_and_list`, `test_upsert_commit_idempotent`, `test_search_fts`, `test_get_patch_roundtrip`).
 
-Build succeeded cleanly with zero warnings after cleanup.
+**Key decisions:** Manual FTS management (no trigger) — `upsert_commit` inserts with empty `patch_preview`; `upsert_patch` does FTS delete+reinsert to update. `patch_blob` is compressed inside `upsert_patch` not by the caller.
 
-**Test results:**
+---
 
-```
-cargo test -p commitmux-store
-running 4 tests
-test tests::test_add_repo_and_list ... ok
-test tests::test_upsert_commit_idempotent ... ok
-test tests::test_search_fts ... ok
-test tests::test_get_patch_roundtrip ... ok
-test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
-```
+### Agent C — Completion Report
 
-All 4 tests pass.
+**Isolation verification:** PASSED. Confirmed on branch `wave1-agent-C`.
 
-**Deviations from spec:**
+**Files created:**
+- `crates/ingest/Cargo.toml` — `commitmux-ingest` v0.1.0
+- `crates/ingest/src/lib.rs` — module declarations, public exports, 3 unit tests
+- `crates/ingest/src/walker.rs` — `Git2Ingester` implementing `Ingester`
+- `crates/ingest/src/patch.rs` — `get_commit_files` and `get_patch_text` helpers
 
-1. **FTS approach: manual management instead of trigger.** The spec described an AFTER INSERT trigger for FTS sync but then noted that manual FTS management would be simpler when `upsert_patch` needs to update `patch_preview`. Chosen approach: no trigger; `upsert_commit` and `upsert_patch` both manually issue FTS `delete` + fresh insert commands. This avoids trigger-vs-manual conflicts and correctly handles the two-phase write (commit first, then patch).
+**Build:** `cargo build -p commitmux-ingest` — clean.
 
-2. **`CommitPatch.patch_blob` semantics clarified.** The spec mentioned `zstd::encode_all(patch_text.as_bytes(), 3)` but the `CommitPatch` struct has a `patch_blob: Vec<u8>` field. The implementation treats `patch_blob` as raw (uncompressed) bytes and compresses them inside `upsert_patch`. The `patch_preview` field on `CommitPatch` is used as-is for the FTS index (first 500 chars stored in `commits.patch_preview`).
+**Tests:** 3/3 passed (`test_sync_empty_repo`, `test_sync_single_commit`, `test_ignore_rules`).
 
-3. **`upsert_commit_files` delete scope.** The spec did not specify upsert semantics for commit_files. The implementation deletes all existing rows for `(repo_id, sha)` of the first file in the batch before re-inserting. This assumes all files for a given commit are always passed together in a single batch call (consistent with how an ingester would call it).
+**Key deviations:**
+1. git2 feature is `vendored-libgit2` not `vendored` — corrected.
+2. `delta.is_binary()` doesn't exist on `DiffDelta` — used `delta.new_file().is_binary() || delta.old_file().is_binary()`.
+3. Root commits handled via `diff_tree_to_tree(None, Some(&commit_tree), None)` — git2 treats None old tree as empty tree.
+4. Empty repo (no HEAD) returns `Err` from `sync_repo`, not `Ok(0)`.
 
-4. **Schema deviations:** `patch_preview` column is on the `commits` table as specified. `commit_patches.patch_blob` stores zstd-compressed bytes. All table and index definitions match the spec exactly.
+---
 
-**FTS approach summary:**
+### Agent D — Completion Report
 
-Manual FTS management (no trigger). `upsert_commit` inserts into `commits_fts` with empty `patch_preview`. `upsert_patch` performs FTS delete+reinsert to update `patch_preview` in the index. The FTS table is `content='commits', content_rowid='rowid'` over columns `subject`, `body`, `patch_preview`.
+**Isolation verification:** PASSED. Confirmed on branch `wave1-agent-D`.
+
+**Files created:**
+- `crates/mcp/Cargo.toml` — `commitmux-mcp` v0.1.0
+- `crates/mcp/src/lib.rs` — MCP server, stdio JSON-RPC loop, tool dispatch
+- `crates/mcp/src/tools.rs` — input deserialization types + tests
+
+**Build:** `cargo build -p commitmux-mcp` — clean.
+
+**Tests:** 7/7 passed (deserialization tests + protocol handler tests for initialize, tools/list, tools/call, not-found).
+
+**Implementation choice:** Manual stdio JSON-RPC instead of rmcp — rmcp requires async/tokio and the protocol is simple enough that manual implementation is smaller and keeps `run_mcp_server` synchronous.
+
+**Entry point:** `pub fn run_mcp_server(store: std::sync::Arc<dyn commitmux_types::Store + 'static>) -> anyhow::Result<()>`
