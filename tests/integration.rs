@@ -67,6 +67,7 @@ fn test_end_to_end() {
         fork_of: None,
         author_filter: None,
         exclude_prefixes: vec![],
+        embed_enabled: false,
     };
     let repo = store.add_repo(&repo_input).unwrap();
 

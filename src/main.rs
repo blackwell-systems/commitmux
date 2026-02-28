@@ -535,6 +535,7 @@ mod tests {
             fork_of: None,
             author_filter: Some("alice@example.com".into()),
             exclude_prefixes: vec![],
+            embed_enabled: false,
         }).expect("add_repo");
 
         let repo = store.get_repo_by_name("myrepo").expect("get").expect("some");
@@ -552,6 +553,7 @@ mod tests {
             fork_of: None,
             author_filter: None,
             exclude_prefixes: vec!["dist/".into(), "vendor/".into()],
+            embed_enabled: false,
         }).expect("add_repo");
 
         let repo = store.get_repo_by_name("myrepo").expect("get").expect("some");
