@@ -660,3 +660,67 @@ No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional fea
 **Out-of-scope files:**
 
 - `Cargo.toml` (worktree root) — created as a minimal temporary workspace (`members = ["crates/types"]`, `resolver = "2"`) solely to satisfy the `cargo -p commitmux-types` verification gate. Wave 2 Agent E must replace this with the full workspace Cargo.toml that includes all crates.
+
+---
+
+### Agent D — Completion Report
+
+**Isolation verification:** PASSED — confirmed working directory `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave1-agent-D` on branch `wave1-agent-D`, confirmed in `git worktree list`.
+
+**Files created/modified:**
+
+- `crates/mcp/Cargo.toml` — package `commitmux-mcp` v0.1.0, edition 2021; deps: `commitmux-types` (path), `serde` (derive), `serde_json`, `anyhow`
+- `crates/mcp/src/lib.rs` — MCP server implementation: `run_mcp_server`, `McpServer`, all 4 tool dispatch methods, and 7 unit tests
+- `crates/mcp/src/tools.rs` — input types (`SearchInput`, `TouchesInput`, `GetCommitInput`, `GetPatchInput`) with deserialization tests
+- `Cargo.toml` (workspace root) — already contained `"crates/mcp"` in members list; no change required
+
+**Build status:**
+
+```
+cargo build -p commitmux-mcp
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.17s
+```
+
+Build succeeded cleanly.
+
+**Test results:**
+
+```
+cargo test -p commitmux-mcp
+running 7 tests
+test tests::test_notification_no_response ... ok
+test tools::tests::test_search_input_deserialize ... ok
+test tools::tests::test_touches_input_deserialize ... ok
+test tests::test_initialize_response ... ok
+test tests::test_tools_call_get_commit_not_found ... ok
+test tests::test_tools_call_search ... ok
+test tests::test_tools_list_response ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+All 7 tests pass (3 required by spec + 4 additional tests for broader coverage).
+
+**Implementation choice: manual stdio JSON-RPC (not rmcp)**
+
+After checking `cargo search rmcp`, the `rmcp` crate is available at version 0.17.0. However, the manual stdio implementation was chosen for the following reasons:
+
+1. rmcp 0.17.0 requires tokio async runtime; the spec explicitly allows using a manual implementation to avoid that complexity.
+2. The MCP protocol over stdio is straightforward newline-delimited JSON-RPC; the manual approach is simpler, more auditable, and has no additional dependencies beyond `serde_json`.
+3. The manual approach keeps `run_mcp_server` synchronous (blocking), matching the spec requirement that it "blocks until stdin closes."
+
+As a result, the `Cargo.toml` does NOT include `rmcp` or `tokio` — only `commitmux-types`, `serde`, `serde_json`, and `anyhow`.
+
+**MCP protocol deviations:** None. The implementation handles:
+- `initialize` — responds with `protocolVersion: "2024-11-05"`, `capabilities: { tools: {} }`, and `serverInfo`
+- `notifications/initialized` (and all messages lacking an `id` field) — no response sent (correct for notifications)
+- `tools/list` — returns all 4 tool definitions with correct `inputSchema` per spec
+- `tools/call` — dispatches to the 4 tools; tool errors return `isError: true` in the result content (not a JSON-RPC error object), per spec
+- Unknown methods — returns JSON-RPC error code -32601 (Method not found)
+- Malformed JSON — logged to stderr and skipped (no response)
+
+**Exact `run_mcp_server` signature as implemented:**
+
+```rust
+pub fn run_mcp_server(store: std::sync::Arc<dyn commitmux_types::Store + 'static>) -> anyhow::Result<()>
+```
