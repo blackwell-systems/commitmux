@@ -58,4 +58,14 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 
 CREATE VIRTUAL TABLE IF NOT EXISTS commits_fts
     USING fts5(subject, body, patch_preview, content='commits', content_rowid='rowid');
+
 "#;
+
+/// Migration statements for new `repos` columns.
+/// Each is attempted individually; "duplicate column name" errors are ignored
+/// so that migrations are idempotent on databases that already have the column.
+pub const REPO_MIGRATIONS: &[&str] = &[
+    "ALTER TABLE repos ADD COLUMN fork_of TEXT",
+    "ALTER TABLE repos ADD COLUMN author_filter TEXT",
+    "ALTER TABLE repos ADD COLUMN exclude_prefixes TEXT",
+];
