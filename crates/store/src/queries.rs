@@ -394,7 +394,7 @@ impl Store for SqliteStore {
 
         let mut extra_conditions = String::new();
         let mut bind_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
-        let mut param_idx = 3usize; // ?1 = like_pat, ?2 = limit (added at end)
+        let mut param_idx = 2usize; // ?1 = like_pat, limit appended at param_idx end
 
         if let Some(since) = opts.since {
             extra_conditions.push_str(&format!(" AND c.author_time >= ?{}", param_idx));
