@@ -1,0 +1,15 @@
+[package]
+name = "commitmux-types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+rusqlite = { version = "0.31", optional = true }
+git2 = { version = "0.19", optional = true }
+
+[features]
+default = ["rusqlite-errors", "git2-errors"]
+rusqlite-errors = ["dep:rusqlite"]
+git2-errors = ["dep:git2"]
