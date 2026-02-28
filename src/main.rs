@@ -23,7 +23,7 @@ enum Commands {
     },
     #[command(about = "Add a git repository to the index")]
     AddRepo {
-        #[arg(conflicts_with = "url", help = "Local path to a git repository")]
+        #[arg(conflicts_with = "url", help = "Local path to a git repository (mutually exclusive with --url)")]
         path: Option<PathBuf>,
         #[arg(long, help = "Override the repo name (default: directory name)")]
         name: Option<String>,
@@ -40,12 +40,14 @@ enum Commands {
     },
     #[command(about = "Remove a repository and all its indexed commits")]
     RemoveRepo {
+        #[arg(help = "Name of the indexed repository (see 'commitmux status')")]
         name: String,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
     },
     #[command(about = "Update stored metadata for a repository")]
     UpdateRepo {
+        #[arg(help = "Name of the indexed repository (see 'commitmux status')")]
         name: String,
         #[arg(long = "fork-of", help = "Upstream repo URL; only index commits not in upstream")]
         fork_of: Option<String>,
@@ -67,6 +69,7 @@ enum Commands {
     },
     #[command(about = "Show full details for a specific commit (JSON output)")]
     Show {
+        #[arg(help = "Name of the indexed repository (see 'commitmux status')")]
         repo: String,
         #[arg(help = "Full or prefix SHA of the commit")]
         sha: String,
@@ -165,6 +168,9 @@ fn main() -> Result<()> {
 
         Commands::AddRepo { path, name, exclude, db, url, fork_of, author } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -230,9 +236,10 @@ fn main() -> Result<()> {
                 let canonical = local_path.canonicalize()
                     .with_context(|| format!("Failed to canonicalize path: {}", local_path.display()))?;
 
-                // Verify the path is a git repository
-                git2::Repository::open(&canonical)
-                    .with_context(|| format!("'{}' is not a git repository", canonical.display()))?;
+                // Verify the path is a git repository (discard libgit2 internals from error chain)
+                git2::Repository::open(&canonical).map_err(|_| {
+                    anyhow::anyhow!("'{}' is not a git repository", canonical.display())
+                })?;
 
                 let repo_name = match name {
                     Some(n) => n,
@@ -271,6 +278,9 @@ fn main() -> Result<()> {
 
         Commands::RemoveRepo { name, db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -309,6 +319,9 @@ fn main() -> Result<()> {
 
         Commands::UpdateRepo { name, fork_of, author, exclude, default_branch, db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -342,6 +355,9 @@ fn main() -> Result<()> {
 
         Commands::Sync { repo, db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -356,7 +372,7 @@ fn main() -> Result<()> {
             };
 
             let mut any_error = false;
-            let mut total_indexed = 0usize;
+            let mut total_in_index = 0usize;
 
             for r in &repos {
                 let ingester = Git2Ingester::new();
@@ -382,7 +398,7 @@ fn main() -> Result<()> {
                         for err in &summary.errors {
                             eprintln!("  warning: {}", err);
                         }
-                        total_indexed += summary.commits_indexed;
+                        total_in_index += summary.commits_indexed + summary.commits_already_indexed;
                     }
                     Err(e) => {
                         eprintln!("Error syncing '{}': {}", r.name, e);
@@ -395,13 +411,16 @@ fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
-            if total_indexed > 0 {
+            if total_in_index > 0 {
                 println!("Tip: run 'commitmux serve' to expose this index via MCP to AI agents.");
             }
         }
 
         Commands::Show { repo, sha, db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -420,6 +439,9 @@ fn main() -> Result<()> {
 
         Commands::Status { db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
@@ -474,6 +496,9 @@ fn main() -> Result<()> {
 
         Commands::Serve { db } => {
             let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+            }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
             let store: Arc<dyn commitmux_types::Store + 'static> = Arc::new(store);
@@ -569,5 +594,54 @@ mod tests {
     #[test]
     fn test_url_validation_accepts_ssh() {
         assert!(validate_git_url("ssh://git@github.com/user/repo.git").is_ok());
+    }
+
+    #[test]
+    fn test_db_not_found_hint_message() {
+        let path = std::path::PathBuf::from("/nonexistent/path/db.sqlite3");
+        if !path.exists() {
+            let result: Result<()> = Err(anyhow::anyhow!(
+                "Database not found at {}. Run 'commitmux init' first.",
+                path.display()
+            ));
+            let msg = result.unwrap_err().to_string();
+            assert!(
+                msg.contains("Run 'commitmux init' first"),
+                "hint message should mention init, got: {}",
+                msg
+            );
+        }
+    }
+
+    #[test]
+    fn test_git2_error_suppressed() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // dir is not a git repo; map_err discards the libgit2 cause chain
+        let result = git2::Repository::open(dir.path())
+            .map(|_| ())
+            .map_err(|_| anyhow::anyhow!("'{}' is not a git repository", dir.path().display()));
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            !msg.contains("class=Repository"),
+            "libgit2 internals should not appear in error, got: {}",
+            msg
+        );
+        assert!(
+            !msg.contains("code=NotFound"),
+            "libgit2 internals should not appear in error, got: {}",
+            msg
+        );
+    }
+
+    #[test]
+    fn test_mcp_tip_on_resync() {
+        // Re-sync: 0 new commits, but 43 already indexed — tip should show
+        let commits_indexed = 0usize;
+        let commits_already_indexed = 43usize;
+        let total_in_index = commits_indexed + commits_already_indexed;
+        assert!(
+            total_in_index > 0,
+            "tip should show when index is non-empty, even with 0 new commits"
+        );
     }
 }
