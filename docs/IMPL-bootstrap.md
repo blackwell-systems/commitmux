@@ -608,4 +608,59 @@ Full build and all tests including integration test must pass.
 - [ ] Wave 1: Agent B — store crate (SQLite + FTS5 + zstd)
 - [ ] Wave 1: Agent C — ingest crate (git2 walking + patch extraction)
 - [ ] Wave 1: Agent D — mcp crate (rmcp stdio server + 4 tools)
+- [x] Wave 0: Agent A — types crate (all shared structs, traits, error types)
+- [ ] Wave 1: Agent B — store crate (SQLite + FTS5 + zstd)
+- [ ] Wave 1: Agent C — ingest crate (git2 walking + patch extraction)
+- [ ] Wave 1: Agent D — mcp crate (rmcp stdio server + 4 tools)
 - [ ] Wave 2: Agent E — workspace Cargo.toml + src/main.rs + integration test
+
+---
+
+### Agent A — Completion Report
+
+**Isolation verification:** PASSED — confirmed working directory `/Users/dayna.blackwell/code/commitmux/.claude/worktrees/wave0-agent-A` on branch `wave0-agent-A`, confirmed in `git worktree list`.
+
+**Files created:**
+
+- `Cargo.toml` (worktree root) — minimal temporary workspace to enable `cargo -p commitmux-types`; out-of-scope but required by the verification gate. Members: `["crates/types"]`. Wave 2 Agent E will replace this with the real workspace Cargo.toml.
+- `crates/types/Cargo.toml` — package `commitmux-types` v0.1.0, edition 2021
+- `crates/types/src/lib.rs` — all types, traits, and error definitions per spec
+
+**Build status:**
+
+```
+cargo build -p commitmux-types
+Finished `dev` profile [unoptimized + debuginfo] target(s) in 23.71s
+```
+
+Build succeeded cleanly.
+
+**Test results:**
+
+```
+cargo test -p commitmux-types
+running 2 tests
+test tests::test_file_status_display ... ok
+test tests::test_smoke_construct_all_types ... ok
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+Both required tests pass.
+
+**Deviations from type definitions:**
+
+Two sets of additions vs. the base `IMPL-bootstrap.md` Interface Contracts section (which predates the agent prompt spec):
+
+1. **`CommitmuxError::NotFound` variant added** — the agent task spec includes `NotFound(String)` in the error enum; the base contracts section omitted it. Added as specified in the task.
+
+2. **`serde::Deserialize` added to MCP response types** — the base contracts section derives only `serde::Serialize` for `SearchResult`, `TouchResult`, `CommitDetail`, `CommitFileDetail`, `PatchResult`, and `IngestSummary`. The agent task spec adds `serde::Deserialize` to all of these. Added as specified; this makes the types usable for round-trip JSON serialization, which is harmless and strictly more capable.
+
+3. **`RepoStats` moved before traits** — in the agent task spec `RepoStats` is declared in the Admin types section before the traits (the base contracts section placed it after the `Store` trait). Followed the agent task spec ordering; no functional difference.
+
+**Feature flag adjustments:**
+
+No adjustments were needed. The `rusqlite-errors` and `git2-errors` optional features compiled cleanly with both enabled (the default). The `#[cfg(feature = ...)]` attributes on `CommitmuxError::Store` and `CommitmuxError::Git` variants work correctly. No changes to `Cargo.toml` were required beyond what was specified.
+
+**Out-of-scope files:**
+
+- `Cargo.toml` (worktree root) — created as a minimal temporary workspace (`members = ["crates/types"]`, `resolver = "2"`) solely to satisfy the `cargo -p commitmux-types` verification gate. Wave 2 Agent E must replace this with the full workspace Cargo.toml that includes all crates.
