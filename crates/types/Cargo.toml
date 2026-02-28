@@ -9,6 +9,9 @@ serde = { version = "1", features = ["derive"] }
 rusqlite = { version = "0.31", optional = true }
 git2 = { version = "0.19", optional = true }
 
+[dev-dependencies]
+serde_json = "1"
+
 [features]
 default = ["rusqlite-errors", "git2-errors"]
 rusqlite-errors = ["dep:rusqlite"]

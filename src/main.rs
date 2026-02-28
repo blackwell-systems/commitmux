@@ -129,7 +129,7 @@ fn main() -> Result<()> {
                 let derived_name = remote_url
                     .trim_end_matches('/')
                     .split('/')
-                    .last()
+                    .next_back()
                     .unwrap_or("repo")
                     .trim_end_matches(".git")
                     .to_string();
@@ -162,6 +162,9 @@ fn main() -> Result<()> {
                     local_path: clone_dir.clone(),
                     remote_url: Some(remote_url.clone()),
                     default_branch: None,
+                    fork_of: None,
+                    author_filter: None,
+                    exclude_prefixes: vec![],
                 })
                 .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
 
@@ -185,6 +188,9 @@ fn main() -> Result<()> {
                     local_path: canonical.clone(),
                     remote_url: None,
                     default_branch: None,
+                    fork_of: None,
+                    author_filter: None,
+                    exclude_prefixes: vec![],
                 })
                 .with_context(|| format!("Failed to add repo '{}'", repo_name))?;
 
@@ -254,13 +260,13 @@ fn main() -> Result<()> {
 
             let repos = store.list_repos().context("Failed to list repos")?;
 
-            println!("{:<20} {:>8}  {}", "REPO", "COMMITS", "LAST SYNCED");
+            println!("{:<20} {:>8}  LAST SYNCED", "REPO", "COMMITS");
             for r in &repos {
                 match store.repo_stats(r.repo_id).with_context(|| format!("Failed to get stats for '{}'", r.name)) {
                     Ok(stats) => {
                         let last_synced = stats
                             .last_synced_at
-                            .map(|ts| format_timestamp(ts))
+                            .map(format_timestamp)
                             .unwrap_or_else(|| "never".to_string());
                         println!("{:<20} {:>8}  {}", r.name, stats.commit_count, last_synced);
                     }

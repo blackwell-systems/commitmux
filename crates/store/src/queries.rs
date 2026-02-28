@@ -3,8 +3,8 @@ use std::sync::MutexGuard;
 
 use commitmux_types::{
     Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, IngestState,
-    PatchResult, Repo, RepoInput, RepoStats, Result, SearchOpts, SearchResult, Store, TouchOpts,
-    TouchResult,
+    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
+    SearchResult, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -18,6 +18,9 @@ fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         local_path: std::path::PathBuf::from(row.get::<_, String>(2)?),
         remote_url: row.get(3)?,
         default_branch: row.get(4)?,
+        fork_of: None,
+        author_filter: None,
+        exclude_prefixes: vec![],
     })
 }
 
@@ -44,6 +47,9 @@ impl Store for SqliteStore {
             local_path: input.local_path.clone(),
             remote_url: input.remote_url.clone(),
             default_branch: input.default_branch.clone(),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
         })
     }
 
@@ -67,6 +73,18 @@ impl Store for SqliteStore {
             )
             .optional()?;
         Ok(result)
+    }
+
+    fn remove_repo(&self, _name: &str) -> Result<()> {
+        unimplemented!("remove_repo: to be implemented by Agent B")
+    }
+
+    fn update_repo(&self, _repo_id: i64, _update: &RepoUpdate) -> Result<Repo> {
+        unimplemented!("update_repo: to be implemented by Agent B")
+    }
+
+    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
+        unimplemented!("list_repos_with_stats: to be implemented by Agent B")
     }
 
     // ── Ingest writes ─────────────────────────────────────────────────────
@@ -265,6 +283,10 @@ impl Store for SqliteStore {
         Ok(())
     }
 
+    fn commit_exists(&self, _repo_id: i64, _sha: &str) -> Result<bool> {
+        unimplemented!("commit_exists: to be implemented by Agent B")
+    }
+
     // ── MCP queries ───────────────────────────────────────────────────────
 
     fn search(&self, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>> {
@@ -325,6 +347,7 @@ impl Store for SqliteStore {
             .chain(bind_vals.iter().map(|b| b.as_ref()))
             .collect();
 
+        #[allow(clippy::type_complexity)]
         let rows: rusqlite::Result<Vec<(i64, String, String, String, i64, String, String)>> =
             stmt.query_map(all_params.as_slice(), |row| {
                 Ok((
@@ -452,7 +475,7 @@ impl Store for SqliteStore {
         Ok(rows?)
     }
 
-    fn get_commit(&self, repo_name: &str, sha: &str) -> Result<Option<CommitDetail>> {
+    fn get_commit(&self, repo_name: &str, sha_prefix: &str) -> Result<Option<CommitDetail>> {
         let conn = self.conn.lock().unwrap();
 
         let detail: Option<(i64, String, String, Option<String>, String, i64)> = conn
@@ -461,7 +484,7 @@ impl Store for SqliteStore {
                  FROM commits c
                  JOIN repos r ON r.repo_id = c.repo_id
                  WHERE r.name = ?1 AND c.sha = ?2",
-                params![repo_name, sha],
+                params![repo_name, sha_prefix],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
             )
             .optional()?;
