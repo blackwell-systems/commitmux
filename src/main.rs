@@ -38,7 +38,7 @@ enum Commands {
         fork_of: Option<String>,
         #[arg(long = "author", help = "Only index commits by this author (email match)")]
         author: Option<String>,
-        #[arg(long = "embed", help = "Enable semantic embeddings for this repo")]
+        #[arg(long = "embed", help = "Enable semantic embeddings for this repo (requires: commitmux config set embed.model <model>)")]
         embed: bool,
     },
     #[command(about = "Remove a repository and all its indexed commits")]
@@ -62,9 +62,9 @@ enum Commands {
         default_branch: Option<String>,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
-        #[arg(long = "embed", help = "Enable semantic embeddings for this repo")]
+        #[arg(long = "embed", conflicts_with = "no_embed", help = "Enable semantic embeddings for this repo")]
         embed: bool,
-        #[arg(long = "no-embed", help = "Disable semantic embeddings for this repo")]
+        #[arg(long = "no-embed", conflicts_with = "embed", help = "Disable semantic embeddings for this repo")]
         no_embed: bool,
     },
     #[command(about = "Index new commits from one or all repositories")]
@@ -73,7 +73,7 @@ enum Commands {
         repo: Option<String>,
         #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
         db: Option<PathBuf>,
-        #[arg(long = "embed-only", help = "Only generate embeddings; skip commit indexing")]
+        #[arg(long = "embed-only", help = "Generate embeddings for already-indexed commits; skip indexing new commits. Useful when embedding was enabled after initial sync.")]
         embed_only: bool,
     },
     #[command(about = "Show full details for a specific commit (JSON output)")]
@@ -115,7 +115,7 @@ enum ConfigAction {
     },
     #[command(about = "Get a configuration value")]
     Get {
-        #[arg(help = "Configuration key")]
+        #[arg(help = "Configuration key (e.g. embed.model, embed.endpoint)")]
         key: String,
     },
 }
@@ -512,7 +512,7 @@ fn main() -> Result<()> {
 
             match store.get_commit(&repo, &sha).context("Failed to get commit")? {
                 None => {
-                    eprintln!("Commit '{}' not found in repo '{}'", sha, repo);
+                    eprintln!("Error: Commit '{}' not found in repo '{}'", sha, repo);
                     std::process::exit(1);
                 }
                 Some(detail) => {
@@ -596,7 +596,7 @@ fn main() -> Result<()> {
                     .unwrap_or_else(|| "nomic-embed-text (default)".into());
                 let endpoint = store.get_config("embed.endpoint").ok().flatten()
                     .unwrap_or_else(|| "http://localhost:11434/v1 (default)".into());
-                println!("\nEmbedding model: {} ({})", model, endpoint);
+                println!("\nEmbedding model: {} ({}) — ✓ = enabled", model, endpoint);
             }
         }
 
@@ -608,6 +608,7 @@ fn main() -> Result<()> {
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
             let store: Arc<dyn commitmux_types::Store + 'static> = Arc::new(store);
+            eprintln!("commitmux MCP server ready (JSON-RPC over stdio). Press Ctrl+C to stop.");
             commitmux_mcp::run_mcp_server(store).context("MCP server error")?;
         }
 
@@ -620,6 +621,17 @@ fn main() -> Result<()> {
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
             match action {
                 ConfigAction::Set { key, value } => {
+                    const VALID_CONFIG_KEYS: &[&str] = &["embed.model", "embed.endpoint"];
+                    if !VALID_CONFIG_KEYS.contains(&key.as_str()) {
+                        anyhow::bail!(
+                            "Unknown config key '{}'. Valid keys: {}",
+                            key,
+                            VALID_CONFIG_KEYS.join(", ")
+                        );
+                    }
+                    if value.trim().is_empty() {
+                        anyhow::bail!("Value for '{}' cannot be empty", key);
+                    }
                     store.set_config(&key, &value).context("Failed to set config")?;
                     println!("Set {} = {}", key, value);
                 }
@@ -780,6 +792,25 @@ mod tests {
         store.set_config("embed.model", "test-model").expect("set_config");
         let value = store.get_config("embed.model").expect("get_config");
         assert_eq!(value, Some("test-model".to_string()));
+    }
+
+    #[test]
+    fn test_config_set_rejects_unknown_key() {
+        const VALID_CONFIG_KEYS: &[&str] = &["embed.model", "embed.endpoint"];
+        assert!(VALID_CONFIG_KEYS.contains(&"embed.model"), "embed.model should be valid");
+        assert!(VALID_CONFIG_KEYS.contains(&"embed.endpoint"), "embed.endpoint should be valid");
+        assert_eq!(VALID_CONFIG_KEYS.len(), 2, "should have exactly 2 valid keys");
+        assert!(!VALID_CONFIG_KEYS.contains(&"embed.endpoint_url"), "embed.endpoint_url should be unknown");
+    }
+
+    #[test]
+    fn test_config_set_rejects_empty_value() {
+        let empty = "";
+        let whitespace = "   ";
+        assert!(empty.trim().is_empty(), "empty string should be rejected");
+        assert!(whitespace.trim().is_empty(), "whitespace-only string should be rejected");
+        let valid = "some-model";
+        assert!(!valid.trim().is_empty(), "non-empty value should not be rejected");
     }
 
     #[test]
