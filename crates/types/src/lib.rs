@@ -203,7 +203,8 @@ pub struct PatchResult {
 pub struct IngestSummary {
     pub repo_name: String,
     pub commits_indexed: usize,
-    pub commits_skipped: usize,
+    pub commits_already_indexed: usize,
+    pub commits_filtered: usize,
     pub errors: Vec<String>,
 }
 
