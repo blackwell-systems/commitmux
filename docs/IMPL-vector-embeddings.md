@@ -322,9 +322,9 @@ Wave 2 → Done gate: Full build, clippy clean, all tests pass; smoke test `comm
 
 ## Status
 
-- [ ] Wave 0 — Schema migration (embed_enabled, config table, commit_embed_map, commit_embeddings)
-- [ ] Wave 1A — types/store: new Store trait methods, EmbedCommit, SemanticSearchOpts, Repo.embed_enabled, SQL implementations, MockStore cascade
-- [ ] Wave 1B — crates/embed: Embedder, embed_pending, build_embed_doc, EmbedSummary, EmbedConfig
+- [x] Wave 0 — Schema migration (embed_enabled, config table, commit_embed_map, commit_embeddings)
+- [x] Wave 1A — types/store: new Store trait methods, EmbedCommit, SemanticSearchOpts, Repo.embed_enabled, SQL implementations, MockStore cascade
+- [x] Wave 1B — crates/embed: Embedder, embed_pending, build_embed_doc, EmbedSummary, EmbedConfig
 - [ ] Wave 2A — src/main.rs: --embed/--no-embed, config subcommand, --embed-only sync, status EMBED column
 - [ ] Wave 2B — crates/mcp: commitmux_search_semantic tool, SemanticSearchInput, StubStore cascade
 
@@ -358,11 +358,65 @@ verification: PASS (cargo build, cargo clippy -D warnings, cargo test — 19/19 
 
 ### Agent 1A — Completion Report
 
-*(to be filled by agent)*
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-a
+commit: a82214c536a7e864129a557e33194b4a83e993de
+files_changed:
+  - crates/types/src/lib.rs
+  - crates/store/src/queries.rs
+  - crates/store/src/lib.rs
+  - crates/ingest/src/lib.rs
+  - src/main.rs
+files_created: []
+interface_deviations:
+  - "INSERT OR REPLACE not supported by sqlite-vec vec0 tables; used DELETE + INSERT
+    for idempotent store_embedding. Semantics are identical."
+out_of_scope_deps:
+  - "file: src/main.rs, change: add embed_enabled field to all RepoInput construction
+    sites and --embed/--no-embed flags, reason: Wave 2A owns src/main.rs. Minimal
+    cascade fix applied (embed_enabled: false defaults + embed_enabled: None for
+    RepoUpdate) to keep cargo build passing; real flag wiring deferred to Wave 2A."
+tests_added:
+  - test_get_set_config
+  - test_get_commits_without_embeddings_returns_unembedded
+  - test_store_embedding_idempotent
+  - test_embed_enabled_roundtrip
+  - test_update_repo_embed_enabled
+verification: PASS (cargo build, cargo clippy -D warnings, cargo test -p commitmux-types -p commitmux-store -p commitmux-ingest — 37/37 tests)
+```
 
 ### Agent 1B — Completion Report
 
-*(to be filled by agent)*
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-b
+commit: d75bc2c892954ea3dcd60498e55572b46936b7aa
+files_changed:
+  - Cargo.toml
+files_created:
+  - crates/embed/Cargo.toml
+  - crates/embed/src/lib.rs
+interface_deviations:
+  - async-openai 0.33 uses `async_openai::types::embeddings::CreateEmbeddingRequestArgs`
+    not `async_openai::types::CreateEmbeddingRequestArgs` as the agent prompt suggested;
+    corrected to the 0.33 actual path.
+  - async-openai 0.33 requires the `embedding` feature flag to enable Client, config module,
+    and CreateEmbeddingRequestArgs builder; added `features = ["embedding"]` to Cargo.toml.
+out_of_scope_build_blockers:
+  - "EmbedCommit type not found — owned by Wave 1A (crates/types/src/lib.rs)"
+  - "Store::get_commits_without_embeddings not found — owned by Wave 1A"
+  - "Store::store_embedding not found — owned by Wave 1A"
+  - "Store::get_config not found — owned by Wave 1A"
+  - "SemanticSearchOpts type not found in tests — owned by Wave 1A (crates/types/src/lib.rs)"
+  - "E0282 type annotations needed (cascade from missing EmbedCommit)"
+tests_added:
+  - test_build_embed_doc_subject_only
+  - test_build_embed_doc_full
+  - test_build_embed_doc_truncates_patch
+  - test_embed_config_defaults
+verification: FAIL (build blocked on Wave 1A: missing EmbedCommit and new Store methods)
+```
 
 ### Agent 2A — Completion Report
 

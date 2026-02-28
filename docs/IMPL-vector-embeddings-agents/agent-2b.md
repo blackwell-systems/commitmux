@@ -184,6 +184,7 @@ new methods:
 fn get_config(&self, _key: &str) -> commitmux_types::Result<Option<String>> { Ok(None) }
 fn set_config(&self, _key: &str, _value: &str) -> commitmux_types::Result<()> { Ok(()) }
 fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> commitmux_types::Result<Vec<commitmux_types::EmbedCommit>> { Ok(vec![]) }
+#[allow(clippy::too_many_arguments)]
 fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> commitmux_types::Result<()> { Ok(()) }
 fn search_semantic(&self, _embedding: &[f32], _opts: &commitmux_types::SemanticSearchOpts) -> commitmux_types::Result<Vec<commitmux_types::SearchResult>> { Ok(vec![]) }
 ```
