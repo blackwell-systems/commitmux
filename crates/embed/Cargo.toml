@@ -1,0 +1,10 @@
+[package]
+name = "commitmux-embed"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+commitmux-types = { path = "../types" }
+async-openai = { version = "0.33", features = ["embedding"] }
+anyhow = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
