@@ -18,6 +18,34 @@ fn parse_exclude_prefixes(s: Option<String>) -> Vec<String> {
     }
 }
 
+fn format_iso_date(ts: i64) -> String {
+    // Manual UTC formatting without chrono dependency — Gregorian calendar arithmetic.
+    // Returns "YYYY-MM-DDTHH:MM:SSZ"
+    let secs = if ts < 0 { 0u64 } else { ts as u64 };
+    let days_since_epoch = secs / 86400;
+    let time_of_day = secs % 86400;
+    let hours = time_of_day / 3600;
+    let minutes = (time_of_day % 3600) / 60;
+    let seconds = time_of_day % 60;
+
+    // Gregorian calendar calculation (same algorithm as format_timestamp in src/main.rs)
+    let z = days_since_epoch as i64 + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        y, m, d, hours, minutes, seconds
+    )
+}
+
 fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
     Ok(Repo {
         repo_id: row.get(0)?,
@@ -489,7 +517,8 @@ impl Store for SqliteStore {
 
         match detail {
             None => Ok(None),
-            Some((repo_id, commit_sha, subject, body, author, date)) => {
+            Some((repo_id, commit_sha, subject, body, author, raw_date)) => {
+                let date = format_iso_date(raw_date);
                 let mut fstmt = conn.prepare(
                     "SELECT path, status, old_path FROM commit_files
                      WHERE repo_id = ?1 AND sha = ?2 ORDER BY path",
@@ -728,5 +757,121 @@ impl Store for SqliteStore {
             last_synced_sha,
             last_error,
         })
+    }
+
+    fn count_commits_for_repo(&self, repo_id: i64) -> Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM commits WHERE repo_id = ?1",
+            params![repo_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use commitmux_types::{Commit, RepoInput, Store};
+    use crate::SqliteStore;
+    use std::path::PathBuf;
+
+    fn make_store() -> SqliteStore {
+        SqliteStore::open_in_memory().expect("open in-memory store")
+    }
+
+    fn make_repo_input(name: &str) -> RepoInput {
+        RepoInput {
+            name: name.to_string(),
+            local_path: PathBuf::from(format!("/tmp/{}", name)),
+            remote_url: None,
+            default_branch: Some("main".to_string()),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
+        }
+    }
+
+    fn make_commit(repo_id: i64, sha: &str, subject: &str, author_time: i64) -> Commit {
+        Commit {
+            repo_id,
+            sha: sha.to_string(),
+            author_name: "Test Author".to_string(),
+            author_email: "test@example.com".to_string(),
+            committer_name: "Test Author".to_string(),
+            committer_email: "test@example.com".to_string(),
+            author_time,
+            commit_time: author_time,
+            subject: subject.to_string(),
+            body: None,
+            parent_count: 0,
+        }
+    }
+
+    #[test]
+    fn test_count_commits_for_repo() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("countrepo")).expect("add repo");
+
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000001", "commit 1", 1700000000)).expect("upsert 1");
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000002", "commit 2", 1700000001)).expect("upsert 2");
+        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000003", "commit 3", 1700000002)).expect("upsert 3");
+
+        let count = store.count_commits_for_repo(repo.repo_id).expect("count_commits_for_repo");
+        assert_eq!(count, 3, "expected 3 commits for repo");
+    }
+
+    #[test]
+    fn test_get_commit_date_is_iso8601() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("daterepo")).expect("add repo");
+
+        // UNIX epoch 0 = 1970-01-01T00:00:00Z
+        store.upsert_commit(&make_commit(repo.repo_id, "epoch000000000001", "epoch commit", 0)).expect("upsert epoch commit");
+
+        let detail = store
+            .get_commit("daterepo", "epoch000000000001")
+            .expect("get_commit")
+            .expect("should be Some");
+
+        assert_eq!(
+            detail.date, "1970-01-01T00:00:00Z",
+            "expected ISO 8601 UTC date string for epoch 0"
+        );
+    }
+
+    #[test]
+    fn test_count_commits_after_remove() {
+        let store = make_store();
+        let repo = store.add_repo(&make_repo_input("removecountrepo")).expect("add repo");
+
+        store.upsert_commit(&make_commit(repo.repo_id, "rc0000000000001a", "rc commit 1", 1700000000)).expect("upsert 1");
+        store.upsert_commit(&make_commit(repo.repo_id, "rc0000000000002b", "rc commit 2", 1700000001)).expect("upsert 2");
+
+        // Verify commits are present before removal
+        let before = store.count_commits_for_repo(repo.repo_id).expect("count before remove");
+        assert_eq!(before, 2, "expected 2 commits before remove");
+
+        // Remove the repo
+        store.remove_repo("removecountrepo").expect("remove repo");
+
+        // After removal, count_commits_for_repo on the old repo_id should return 0
+        let after = store.count_commits_for_repo(repo.repo_id).expect("count after remove");
+        assert_eq!(after, 0, "expected 0 commits after repo removal");
+    }
+
+    #[test]
+    fn test_format_iso_date_epoch() {
+        assert_eq!(format_iso_date(0), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn test_format_iso_date_known_timestamp() {
+        // 2026-02-28T15:34:55Z = 1772234095
+        // Verify a known timestamp: 2000-01-01T00:00:00Z = 946684800
+        assert_eq!(format_iso_date(946684800), "2000-01-01T00:00:00Z");
     }
 }

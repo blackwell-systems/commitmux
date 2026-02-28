@@ -181,7 +181,7 @@ pub struct CommitDetail {
     pub subject: String,
     pub body: Option<String>,
     pub author: String,
-    pub date: i64,
+    pub date: String,   // ISO 8601 UTC: "YYYY-MM-DDTHH:MM:SSZ"
     pub changed_files: Vec<CommitFileDetail>,
 }
 
@@ -199,11 +199,11 @@ pub struct PatchResult {
     pub patch_text: String,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct IngestSummary {
-    pub repo_name: String,
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct SyncSummary {
     pub commits_indexed: usize,
-    pub commits_skipped: usize,
+    pub commits_already_indexed: usize,
+    pub commits_filtered: usize,
     pub errors: Vec<String>,
 }
 
@@ -268,10 +268,11 @@ pub trait Store: Send + Sync {
 
     // Admin
     fn repo_stats(&self, repo_id: i64) -> Result<RepoStats>;
+    fn count_commits_for_repo(&self, repo_id: i64) -> Result<usize>;
 }
 
 pub trait Ingester: Send + Sync {
-    fn sync_repo(&self, repo: &Repo, store: &dyn Store, config: &IgnoreConfig) -> Result<IngestSummary>;
+    fn sync_repo(&self, repo: &Repo, store: &dyn Store, config: &IgnoreConfig) -> Result<SyncSummary>;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
