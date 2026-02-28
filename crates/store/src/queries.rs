@@ -916,7 +916,36 @@ impl Store for SqliteStore {
                 })
             })?
             .collect();
-        Ok(results?)
+        let results = results?;
+
+        // If no results, check if any repos have embeddings enabled but not generated
+        if results.is_empty() {
+            let repos_to_check: Vec<Repo> = if let Some(ref repo_names) = opts.repos {
+                // User specified repos - check only those
+                repo_names.iter()
+                    .filter_map(|name| self.get_repo_by_name(name).ok().flatten())
+                    .collect()
+            } else {
+                // No filter - check all repos with embed_enabled
+                self.list_repos()?.into_iter()
+                    .filter(|r| r.embed_enabled)
+                    .collect()
+            };
+
+            for repo in repos_to_check {
+                if repo.embed_enabled {
+                    let count = self.count_embeddings_for_repo(repo.repo_id)?;
+                    if count == 0 {
+                        return Err(CommitmuxError::NotFound(
+                            format!("No results. Repo '{}' has embeddings enabled but not yet generated. Run: commitmux sync --embed-only --repo {}",
+                                repo.name, repo.name)
+                        ));
+                    }
+                }
+            }
+        }
+
+        Ok(results)
     }
 }
 
