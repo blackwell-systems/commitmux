@@ -32,6 +32,10 @@ pub struct Repo {
     pub local_path: PathBuf,
     pub remote_url: Option<String>,
     pub default_branch: Option<String>,
+    // NEW:
+    pub fork_of: Option<String>,
+    pub author_filter: Option<String>,
+    pub exclude_prefixes: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +44,25 @@ pub struct RepoInput {
     pub local_path: PathBuf,
     pub remote_url: Option<String>,
     pub default_branch: Option<String>,
+    // NEW:
+    pub fork_of: Option<String>,
+    pub author_filter: Option<String>,
+    pub exclude_prefixes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RepoUpdate {
+    pub fork_of: Option<Option<String>>,
+    pub author_filter: Option<Option<String>>,
+    pub exclude_prefixes: Option<Vec<String>>,
+    pub default_branch: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoListEntry {
+    pub name: String,
+    pub commit_count: usize,
+    pub last_synced_at: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +247,9 @@ pub trait Store: Send + Sync {
     fn add_repo(&self, input: &RepoInput) -> Result<Repo>;
     fn list_repos(&self) -> Result<Vec<Repo>>;
     fn get_repo_by_name(&self, name: &str) -> Result<Option<Repo>>;
+    fn remove_repo(&self, name: &str) -> Result<()>;
+    fn update_repo(&self, repo_id: i64, update: &RepoUpdate) -> Result<Repo>;
+    fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>>;
 
     // Ingest writes
     fn upsert_commit(&self, commit: &Commit) -> Result<()>;
@@ -231,11 +257,13 @@ pub trait Store: Send + Sync {
     fn upsert_patch(&self, patch: &CommitPatch) -> Result<()>;
     fn get_ingest_state(&self, repo_id: i64) -> Result<Option<IngestState>>;
     fn update_ingest_state(&self, state: &IngestState) -> Result<()>;
+    fn commit_exists(&self, repo_id: i64, sha: &str) -> Result<bool>;
 
     // MCP queries
     fn search(&self, query: &str, opts: &SearchOpts) -> Result<Vec<SearchResult>>;
     fn touches(&self, path_glob: &str, opts: &TouchOpts) -> Result<Vec<TouchResult>>;
-    fn get_commit(&self, repo_name: &str, sha: &str) -> Result<Option<CommitDetail>>;
+    /// sha_prefix: exact SHA or a unique hex prefix (>=4 chars recommended)
+    fn get_commit(&self, repo_name: &str, sha_prefix: &str) -> Result<Option<CommitDetail>>;
     fn get_patch(&self, repo_name: &str, sha: &str, max_bytes: Option<usize>) -> Result<Option<PatchResult>>;
 
     // Admin
@@ -261,6 +289,9 @@ mod tests {
             local_path: PathBuf::from("/tmp/myrepo"),
             remote_url: Some("https://github.com/user/myrepo".into()),
             default_branch: Some("main".into()),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
         };
         assert_eq!(repo.name, "myrepo");
 
@@ -320,5 +351,54 @@ mod tests {
         assert_eq!(FileStatus::Modified.as_str(), "M");
         assert_eq!(FileStatus::Deleted.as_str(), "D");
         assert_eq!(FileStatus::Renamed.as_str(), "R");
+    }
+
+    #[test]
+    fn test_repo_new_fields_default() {
+        let repo = Repo {
+            repo_id: 42,
+            name: "my-repo".into(),
+            local_path: PathBuf::from("/tmp/my-repo"),
+            remote_url: None,
+            default_branch: None,
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
+        };
+        assert!(repo.fork_of.is_none());
+        assert!(repo.author_filter.is_none());
+        assert!(repo.exclude_prefixes.is_empty());
+    }
+
+    #[test]
+    fn test_repo_update_type() {
+        let default_update = RepoUpdate::default();
+        assert!(default_update.fork_of.is_none());
+        assert!(default_update.author_filter.is_none());
+        assert!(default_update.exclude_prefixes.is_none());
+        assert!(default_update.default_branch.is_none());
+
+        let update_with_fork = RepoUpdate {
+            fork_of: Some(Some("https://github.com/foo/bar".into())),
+            ..RepoUpdate::default()
+        };
+        assert_eq!(
+            update_with_fork.fork_of,
+            Some(Some("https://github.com/foo/bar".into()))
+        );
+    }
+
+    #[test]
+    fn test_repo_list_entry_serializes() {
+        let entry = RepoListEntry {
+            name: "my-repo".into(),
+            commit_count: 42,
+            last_synced_at: Some(1700000000),
+        };
+        let json_str = serde_json::to_string(&entry).expect("serialize");
+        let deserialized: RepoListEntry = serde_json::from_str(&json_str).expect("deserialize");
+        assert_eq!(deserialized.name, "my-repo");
+        assert_eq!(deserialized.commit_count, 42);
+        assert_eq!(deserialized.last_synced_at, Some(1700000000));
     }
 }

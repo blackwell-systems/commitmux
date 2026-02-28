@@ -56,6 +56,9 @@ mod tests {
             local_path: PathBuf::from(format!("/tmp/{}", name)),
             remote_url: None,
             default_branch: Some("main".to_string()),
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
         }
     }
 

@@ -70,11 +70,7 @@ impl McpServer {
         let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
         // Notifications have no "id" field — do not respond.
-        if id.is_none() {
-            return None;
-        }
-
-        let id = id.unwrap();
+        let id = id?;
 
         let response = match method {
             "initialize" => self.handle_initialize(&id),
@@ -286,8 +282,8 @@ mod tests {
         CommitDetail, PatchResult, Result as StoreResult, SearchResult, Store, TouchResult,
     };
     use commitmux_types::{
-        Commit, CommitFile, CommitPatch, IngestState, Repo, RepoInput, RepoStats,
-        SearchOpts, TouchOpts,
+        Commit, CommitFile, CommitPatch, IngestState, Repo, RepoInput, RepoListEntry,
+        RepoStats, RepoUpdate, SearchOpts, TouchOpts,
     };
 
     /// A minimal in-memory stub store for testing.
@@ -303,6 +299,15 @@ mod tests {
         fn get_repo_by_name(&self, _name: &str) -> StoreResult<Option<Repo>> {
             unimplemented!()
         }
+        fn remove_repo(&self, _name: &str) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn update_repo(&self, _repo_id: i64, _update: &RepoUpdate) -> StoreResult<Repo> {
+            unimplemented!()
+        }
+        fn list_repos_with_stats(&self) -> StoreResult<Vec<RepoListEntry>> {
+            unimplemented!()
+        }
         fn upsert_commit(&self, _commit: &Commit) -> StoreResult<()> {
             unimplemented!()
         }
@@ -316,6 +321,9 @@ mod tests {
             unimplemented!()
         }
         fn update_ingest_state(&self, _state: &IngestState) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn commit_exists(&self, _repo_id: i64, _sha: &str) -> StoreResult<bool> {
             unimplemented!()
         }
 
@@ -349,12 +357,12 @@ mod tests {
         fn get_commit(
             &self,
             repo_name: &str,
-            sha: &str,
+            sha_prefix: &str,
         ) -> StoreResult<Option<CommitDetail>> {
-            if repo_name == "testrepo" && sha == "abc123" {
+            if repo_name == "testrepo" && sha_prefix == "abc123" {
                 Ok(Some(CommitDetail {
                     repo: repo_name.into(),
-                    sha: sha.into(),
+                    sha: sha_prefix.into(),
                     subject: "test commit".into(),
                     body: None,
                     author: "Alice".into(),

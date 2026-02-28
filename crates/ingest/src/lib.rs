@@ -8,8 +8,8 @@ mod tests {
     use super::*;
     use commitmux_types::{
         CommitDetail, CommitFile, CommitPatch, IgnoreConfig, IngestState,
-        Ingester, PatchResult, Repo, RepoInput, RepoStats, Result, SearchOpts,
-        SearchResult, Store, TouchOpts, TouchResult,
+        Ingester, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate,
+        Result, SearchOpts, SearchResult, Store, TouchOpts, TouchResult,
     };
     use std::sync::Mutex;
 
@@ -46,6 +46,18 @@ mod tests {
             unimplemented!()
         }
 
+        fn remove_repo(&self, _name: &str) -> Result<()> {
+            unimplemented!()
+        }
+
+        fn update_repo(&self, _repo_id: i64, _update: &RepoUpdate) -> Result<Repo> {
+            unimplemented!()
+        }
+
+        fn list_repos_with_stats(&self) -> Result<Vec<RepoListEntry>> {
+            unimplemented!()
+        }
+
         fn upsert_commit(&self, commit: &commitmux_types::Commit) -> Result<()> {
             self.commits.lock().unwrap().push(commit.clone());
             Ok(())
@@ -70,6 +82,11 @@ mod tests {
             Ok(())
         }
 
+        fn commit_exists(&self, _repo_id: i64, sha: &str) -> Result<bool> {
+            // Real impl for test support:
+            Ok(self.commits.lock().unwrap().iter().any(|c| c.sha == sha))
+        }
+
         fn search(&self, _query: &str, _opts: &SearchOpts) -> Result<Vec<SearchResult>> {
             unimplemented!()
         }
@@ -81,7 +98,7 @@ mod tests {
         fn get_commit(
             &self,
             _repo_name: &str,
-            _sha: &str,
+            _sha_prefix: &str,
         ) -> Result<Option<CommitDetail>> {
             unimplemented!()
         }
@@ -109,6 +126,9 @@ mod tests {
             local_path: path.to_path_buf(),
             remote_url: None,
             default_branch: None,
+            fork_of: None,
+            author_filter: None,
+            exclude_prefixes: vec![],
         }
     }
 

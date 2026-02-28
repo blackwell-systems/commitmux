@@ -64,6 +64,9 @@ fn test_end_to_end() {
         local_path: repo_dir.path().to_path_buf(),
         remote_url: None,
         default_branch: None,
+        fork_of: None,
+        author_filter: None,
+        exclude_prefixes: vec![],
     };
     let repo = store.add_repo(&repo_input).unwrap();
 
