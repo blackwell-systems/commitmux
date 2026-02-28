@@ -932,7 +932,26 @@ Both progress indicators require refactoring the batch loop in `crates/embed/src
 ---
 
 ### Agent C — Completion Report
-(Agent C will append their report here after completing their work)
+
+```yaml
+status: complete
+worktree: .claude/worktrees/wave1-agent-c
+commit: a06d689dbad8dc9c2049dbae144a37e0ce1e39c8
+files_changed:
+  - src/main.rs
+  - crates/types/src/lib.rs
+  - crates/store/src/queries.rs
+  - crates/ingest/src/lib.rs
+  - crates/embed/src/lib.rs
+  - crates/mcp/src/lib.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_count_embeddings_for_repo_zero_when_none_exist
+  - test_count_embeddings_for_repo_matches_stored_count
+verification: PASS (cargo test --workspace — 72/72 tests)
+```
 
 ---
 
