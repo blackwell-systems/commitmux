@@ -1191,7 +1191,7 @@ mod tests {
             .expect("search_semantic");
 
         assert!(
-            results.len() > 0,
+            !results.is_empty(),
             "expected at least 1 result from semantic search"
         );
         assert_eq!(results[0].sha, "abc123def456");
@@ -1309,7 +1309,7 @@ mod tests {
             .search_semantic(&query_embedding, &opts)
             .expect("search_semantic");
 
-        assert!(results.len() > 0, "expected at least 1 result");
+        assert!(!results.is_empty(), "expected at least 1 result");
         for result in &results {
             assert_eq!(
                 result.repo, "repo-one",

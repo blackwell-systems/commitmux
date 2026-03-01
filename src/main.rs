@@ -968,11 +968,10 @@ mod tests {
     fn test_db_not_found_hint_message() {
         let path = std::path::PathBuf::from("/nonexistent/path/db.sqlite3");
         if !path.exists() {
-            let result: Result<()> = Err(anyhow::anyhow!(
+            let msg = format!(
                 "Database not found at {}. Run 'commitmux init' first.",
                 path.display()
-            ));
-            let msg = result.unwrap_err().to_string();
+            );
             assert!(
                 msg.contains("Run 'commitmux init' first"),
                 "hint message should mention init, got: {}",
