@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **CI workflow** — `.github/workflows/ci.yml` runs on every push and PR to `main`. Three sequential jobs: `Lint & Format` (rustfmt check + clippy `-D warnings`), `Test` (`cargo test --workspace`), `Build` (cross-compile check against linux/darwin × amd64/arm64 via `cargo check`). Uses `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache` for fast incremental builds.
+
 - **Semantic search**: `commitmux_search_semantic` MCP tool — natural language search over commit history using vector embeddings. Finds commits by intent, not just keywords. Powered by any OpenAI-compatible embedding endpoint (Ollama by default).
 - `add-repo --embed`: enable semantic embeddings when registering a repo.
 - `update-repo --embed` / `update-repo --no-embed`: enable or disable embeddings on an existing repo.
