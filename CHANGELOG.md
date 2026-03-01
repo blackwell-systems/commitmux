@@ -48,6 +48,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- MCP test mock for `search` was missing the `score` field added to `SearchResult` for semantic search results. Added `score: None` to the mock struct literal.
 - `embed_pending` now fail-fasts on Ollama connection errors instead of printing one error per commit and exiting 0. A single actionable message is shown with the configured endpoint and instructions to run `ollama serve`.
 - `config set` now validates keys against a known allowlist and rejects empty values, rather than silently accepting invalid configuration.
 - `--embed` and `--no-embed` are now mutually exclusive at the CLI level (clap `conflicts_with`); previously passing both flags silently resolved to the last one.

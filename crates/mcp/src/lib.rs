@@ -431,6 +431,7 @@ mod tests {
                 date: 1700000000,
                 matched_paths: vec!["src/lib.rs".into()],
                 patch_excerpt: String::new(),
+                score: None,
             }])
         }
 
