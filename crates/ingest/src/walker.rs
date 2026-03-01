@@ -1,6 +1,6 @@
 use commitmux_types::{
-    Commit, CommitPatch, CommitmuxError, IgnoreConfig, IngestState, SyncSummary, Repo, Result,
-    Store,
+    Commit, CommitPatch, CommitmuxError, IgnoreConfig, IngestState, Repo, Result, Store,
+    SyncSummary,
 };
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -70,10 +70,9 @@ impl commitmux_types::Ingester for Git2Ingester {
                     }
                 }
                 Err(e) => {
-                    summary.errors.push(format!(
-                        "Warning: failed to list remotes: {}",
-                        e.message()
-                    ));
+                    summary
+                        .errors
+                        .push(format!("Warning: failed to list remotes: {}", e.message()));
                 }
             }
         }
@@ -118,7 +117,8 @@ impl commitmux_types::Ingester for Git2Ingester {
                         // Wrong URL — update it
                         if let Err(e) = git_repo.remote_set_url("upstream", upstream_url) {
                             summary.errors.push(format!(
-                                "Warning: failed to update upstream remote URL: {}", e.message()
+                                "Warning: failed to update upstream remote URL: {}",
+                                e.message()
                             ));
                         }
                     }
@@ -130,7 +130,8 @@ impl commitmux_types::Ingester for Git2Ingester {
             if needs_create {
                 if let Err(e) = git_repo.remote("upstream", upstream_url) {
                     summary.errors.push(format!(
-                        "Warning: failed to add upstream remote: {}", e.message()
+                        "Warning: failed to add upstream remote: {}",
+                        e.message()
                     ));
                     // Skip fork-of logic entirely
                 }
@@ -146,21 +147,25 @@ impl commitmux_types::Ingester for Git2Ingester {
                 fo.remote_callbacks(callbacks);
                 if let Err(e) = remote.fetch::<&str>(&[], Some(&mut fo), None) {
                     summary.errors.push(format!(
-                        "Warning: failed to fetch upstream: {}", e.message()
+                        "Warning: failed to fetch upstream: {}",
+                        e.message()
                     ));
                 }
             }
 
             // Step 3: resolve upstream tip (try HEAD, main, master)
-            let upstream_tip = ["refs/remotes/upstream/HEAD",
-                                "refs/remotes/upstream/main",
-                                "refs/remotes/upstream/master"]
-                .iter()
-                .find_map(|refname| {
-                    git_repo.revparse_single(refname)
-                        .ok()
-                        .and_then(|obj| obj.peel_to_commit().ok())
-                });
+            let upstream_tip = [
+                "refs/remotes/upstream/HEAD",
+                "refs/remotes/upstream/main",
+                "refs/remotes/upstream/master",
+            ]
+            .iter()
+            .find_map(|refname| {
+                git_repo
+                    .revparse_single(refname)
+                    .ok()
+                    .and_then(|obj| obj.peel_to_commit().ok())
+            });
 
             if let Some(upstream_commit) = upstream_tip {
                 // Step 4: find merge base and hide upstream commits from walk
@@ -168,20 +173,23 @@ impl commitmux_types::Ingester for Git2Ingester {
                     Ok(base_oid) => {
                         if let Err(e) = revwalk.hide(base_oid) {
                             summary.errors.push(format!(
-                                "Warning: failed to hide upstream commits: {}", e.message()
+                                "Warning: failed to hide upstream commits: {}",
+                                e.message()
                             ));
                         }
                     }
                     Err(e) => {
                         summary.errors.push(format!(
                             "Warning: no merge base with upstream ({}): {}",
-                            upstream_url, e.message()
+                            upstream_url,
+                            e.message()
                         ));
                     }
                 }
             } else {
                 summary.errors.push(format!(
-                    "Warning: could not resolve upstream tip for '{}'", upstream_url
+                    "Warning: could not resolve upstream tip for '{}'",
+                    upstream_url
                 ));
             }
         }
@@ -201,11 +209,9 @@ impl commitmux_types::Ingester for Git2Ingester {
             let git_commit = match git_repo.find_commit(oid) {
                 Ok(c) => c,
                 Err(e) => {
-                    summary.errors.push(format!(
-                        "Failed to find commit {}: {}",
-                        oid,
-                        e.message()
-                    ));
+                    summary
+                        .errors
+                        .push(format!("Failed to find commit {}: {}", oid, e.message()));
                     continue;
                 }
             };
@@ -221,7 +227,8 @@ impl commitmux_types::Ingester for Git2Ingester {
                 Ok(false) => { /* proceed */ }
                 Err(e) => {
                     summary.errors.push(format!(
-                        "Warning: failed to check commit existence for {}: {}", sha, e
+                        "Warning: failed to check commit existence for {}: {}",
+                        sha, e
                     ));
                     // Proceed to index it anyway (conservative)
                 }
@@ -234,9 +241,7 @@ impl commitmux_types::Ingester for Git2Ingester {
             let message = git_commit.message().unwrap_or("").to_string();
             let mut lines = message.lines();
             let subject = lines.next().unwrap_or("").trim().to_string();
-            let body_lines: Vec<&str> = lines
-                .skip_while(|l| l.trim().is_empty())
-                .collect();
+            let body_lines: Vec<&str> = lines.skip_while(|l| l.trim().is_empty()).collect();
             let body = if body_lines.is_empty() {
                 None
             } else {
@@ -277,17 +282,15 @@ impl commitmux_types::Ingester for Git2Ingester {
             match patch::get_commit_files(&git_repo, &git_commit, repo.repo_id, &effective_config) {
                 Ok(files) => {
                     if let Err(e) = store.upsert_commit_files(&files) {
-                        summary.errors.push(format!(
-                            "Failed to upsert files for commit {}: {}",
-                            sha, e
-                        ));
+                        summary
+                            .errors
+                            .push(format!("Failed to upsert files for commit {}: {}", sha, e));
                     }
                 }
                 Err(e) => {
-                    summary.errors.push(format!(
-                        "Failed to get files for commit {}: {}",
-                        sha, e
-                    ));
+                    summary
+                        .errors
+                        .push(format!("Failed to get files for commit {}: {}", sha, e));
                 }
             }
 

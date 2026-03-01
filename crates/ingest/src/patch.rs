@@ -47,10 +47,7 @@ pub fn get_commit_files(
         // Determine the primary path (new file path, or old for deletes)
         let path = match status {
             git2::Delta::Deleted => delta.old_file().path(),
-            _ => delta
-                .new_file()
-                .path()
-                .or_else(|| delta.old_file().path()),
+            _ => delta.new_file().path().or_else(|| delta.old_file().path()),
         };
 
         let path_str = match path.and_then(|p| p.to_str()) {

@@ -99,6 +99,5 @@ pub const REPO_MIGRATIONS: &[&str] = &[
 /// Migration statements for embedding support columns.
 /// Each is attempted individually; "duplicate column name" errors are ignored
 /// so that migrations are idempotent on databases that already have the column.
-pub const EMBED_MIGRATIONS: &[&str] = &[
-    "ALTER TABLE repos ADD COLUMN embed_enabled INTEGER NOT NULL DEFAULT 0",
-];
+pub const EMBED_MIGRATIONS: &[&str] =
+    &["ALTER TABLE repos ADD COLUMN embed_enabled INTEGER NOT NULL DEFAULT 0"];

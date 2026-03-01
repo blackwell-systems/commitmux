@@ -164,7 +164,7 @@ pub struct EmbedCommit {
     pub sha: String,
     pub subject: String,
     pub body: Option<String>,
-    pub files_changed: Vec<String>,    // file paths only
+    pub files_changed: Vec<String>, // file paths only
     pub patch_preview: Option<String>,
     // Auxiliary column fields (stored alongside the vector for join-free search)
     pub author_name: String,
@@ -175,9 +175,9 @@ pub struct EmbedCommit {
 /// Options for semantic (vector) search.
 #[derive(Debug, Clone, Default)]
 pub struct SemanticSearchOpts {
-    pub repos: Option<Vec<String>>,   // filter by repo name
-    pub since: Option<i64>,           // unix timestamp lower bound
-    pub limit: Option<usize>,         // default 10
+    pub repos: Option<Vec<String>>, // filter by repo name
+    pub since: Option<i64>,         // unix timestamp lower bound
+    pub limit: Option<usize>,       // default 10
 }
 
 // ── MCP response types ────────────────────────────────────────────────────
@@ -212,7 +212,7 @@ pub struct CommitDetail {
     pub subject: String,
     pub body: Option<String>,
     pub author: String,
-    pub date: String,   // ISO 8601 UTC: "YYYY-MM-DDTHH:MM:SSZ"
+    pub date: String, // ISO 8601 UTC: "YYYY-MM-DDTHH:MM:SSZ"
     pub changed_files: Vec<CommitFileDetail>,
 }
 
@@ -295,7 +295,12 @@ pub trait Store: Send + Sync {
     fn touches(&self, path_glob: &str, opts: &TouchOpts) -> Result<Vec<TouchResult>>;
     /// sha_prefix: exact SHA or a unique hex prefix (>=4 chars recommended)
     fn get_commit(&self, repo_name: &str, sha_prefix: &str) -> Result<Option<CommitDetail>>;
-    fn get_patch(&self, repo_name: &str, sha: &str, max_bytes: Option<usize>) -> Result<Option<PatchResult>>;
+    fn get_patch(
+        &self,
+        repo_name: &str,
+        sha: &str,
+        max_bytes: Option<usize>,
+    ) -> Result<Option<PatchResult>>;
 
     // Admin
     fn repo_stats(&self, repo_id: i64) -> Result<RepoStats>;
@@ -305,7 +310,11 @@ pub trait Store: Send + Sync {
     // Embedding support
     fn get_config(&self, key: &str) -> Result<Option<String>>;
     fn set_config(&self, key: &str, value: &str) -> Result<()>;
-    fn get_commits_without_embeddings(&self, repo_id: i64, limit: usize) -> Result<Vec<EmbedCommit>>;
+    fn get_commits_without_embeddings(
+        &self,
+        repo_id: i64,
+        limit: usize,
+    ) -> Result<Vec<EmbedCommit>>;
     #[allow(clippy::too_many_arguments)]
     fn store_embedding(
         &self,
@@ -318,11 +327,20 @@ pub trait Store: Send + Sync {
         patch_preview: Option<&str>,
         embedding: &[f32],
     ) -> Result<()>;
-    fn search_semantic(&self, embedding: &[f32], opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>>;
+    fn search_semantic(
+        &self,
+        embedding: &[f32],
+        opts: &SemanticSearchOpts,
+    ) -> Result<Vec<SearchResult>>;
 }
 
 pub trait Ingester: Send + Sync {
-    fn sync_repo(&self, repo: &Repo, store: &dyn Store, config: &IgnoreConfig) -> Result<SyncSummary>;
+    fn sync_repo(
+        &self,
+        repo: &Repo,
+        store: &dyn Store,
+        config: &IgnoreConfig,
+    ) -> Result<SyncSummary>;
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────

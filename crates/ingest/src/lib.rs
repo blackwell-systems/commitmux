@@ -7,9 +7,9 @@ pub use walker::Git2Ingester;
 mod tests {
     use super::*;
     use commitmux_types::{
-        CommitDetail, CommitFile, CommitPatch, EmbedCommit, IgnoreConfig, IngestState,
-        Ingester, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate,
-        Result, SearchOpts, SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
+        CommitDetail, CommitFile, CommitPatch, EmbedCommit, IgnoreConfig, IngestState, Ingester,
+        PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
+        SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
     };
     use std::sync::Mutex;
 
@@ -95,11 +95,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_commit(
-            &self,
-            _repo_name: &str,
-            _sha_prefix: &str,
-        ) -> Result<Option<CommitDetail>> {
+        fn get_commit(&self, _repo_name: &str, _sha_prefix: &str) -> Result<Option<CommitDetail>> {
             unimplemented!()
         }
 
@@ -124,12 +120,40 @@ mod tests {
             Ok(0)
         }
 
-        fn get_config(&self, _key: &str) -> Result<Option<String>> { Ok(None) }
-        fn set_config(&self, _key: &str, _value: &str) -> Result<()> { Ok(()) }
-        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> Result<Vec<EmbedCommit>> { Ok(vec![]) }
+        fn get_config(&self, _key: &str) -> Result<Option<String>> {
+            Ok(None)
+        }
+        fn set_config(&self, _key: &str, _value: &str) -> Result<()> {
+            Ok(())
+        }
+        fn get_commits_without_embeddings(
+            &self,
+            _repo_id: i64,
+            _limit: usize,
+        ) -> Result<Vec<EmbedCommit>> {
+            Ok(vec![])
+        }
         #[allow(clippy::too_many_arguments)]
-        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> Result<()> { Ok(()) }
-        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>> { Ok(vec![]) }
+        fn store_embedding(
+            &self,
+            _repo_id: i64,
+            _sha: &str,
+            _subject: &str,
+            _author_name: &str,
+            _repo_name: &str,
+            _author_time: i64,
+            _patch_preview: Option<&str>,
+            _embedding: &[f32],
+        ) -> Result<()> {
+            Ok(())
+        }
+        fn search_semantic(
+            &self,
+            _embedding: &[f32],
+            _opts: &SemanticSearchOpts,
+        ) -> Result<Vec<SearchResult>> {
+            Ok(vec![])
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
@@ -193,14 +217,23 @@ mod tests {
         std::fs::write(&file_path, "# Hello\n").expect("write file");
 
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("README.md")).expect("add path");
+        index
+            .add_path(std::path::Path::new("README.md"))
+            .expect("add path");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
 
         let sig = git2::Signature::now("Test Author", "test@example.com").expect("sig");
         git_repo
-            .commit(Some("HEAD"), &sig, &sig, "Initial commit\n\nThis is the body.", &tree, &[])
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Initial commit\n\nThis is the body.",
+                &tree,
+                &[],
+            )
             .expect("commit");
 
         let store = MockStore::new();
@@ -212,8 +245,14 @@ mod tests {
             .expect("sync_repo");
 
         assert_eq!(summary.commits_indexed, 1, "should index 1 commit");
-        assert_eq!(summary.commits_already_indexed, 0, "should have 0 already-indexed commits");
-        assert_eq!(summary.commits_filtered, 0, "should have 0 filtered commits");
+        assert_eq!(
+            summary.commits_already_indexed, 0,
+            "should have 0 already-indexed commits"
+        );
+        assert_eq!(
+            summary.commits_filtered, 0,
+            "should have 0 filtered commits"
+        );
         assert!(summary.errors.is_empty(), "no errors: {:?}", summary.errors);
 
         let commits = store.commits.lock().unwrap();
@@ -250,14 +289,7 @@ mod tests {
 
         let sig = git2::Signature::now("Test Author", "test@example.com").expect("sig");
         git_repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "Add files",
-                &tree,
-                &[],
-            )
+            .commit(Some("HEAD"), &sig, &sig, "Add files", &tree, &[])
             .expect("commit");
 
         let store = MockStore::new();
@@ -297,21 +329,33 @@ mod tests {
         let file1 = dir.path().join("alice.txt");
         std::fs::write(&file1, "alice\n").expect("write alice.txt");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("alice.txt")).expect("add alice.txt");
+        index
+            .add_path(std::path::Path::new("alice.txt"))
+            .expect("add alice.txt");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
         let time = git2::Time::new(1_000_000, 0);
-        let alice_sig = git2::Signature::new("Alice", "alice@example.com", &time).expect("alice sig");
+        let alice_sig =
+            git2::Signature::new("Alice", "alice@example.com", &time).expect("alice sig");
         let c1 = git_repo
-            .commit(Some("HEAD"), &alice_sig, &alice_sig, "Alice commit", &tree, &[])
+            .commit(
+                Some("HEAD"),
+                &alice_sig,
+                &alice_sig,
+                "Alice commit",
+                &tree,
+                &[],
+            )
             .expect("alice commit");
 
         // Commit 2: by Bob
         let file2 = dir.path().join("bob.txt");
         std::fs::write(&file2, "bob\n").expect("write bob.txt");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("bob.txt")).expect("add bob.txt");
+        index
+            .add_path(std::path::Path::new("bob.txt"))
+            .expect("add bob.txt");
         index.write().expect("write index");
         let tree_oid2 = index.write_tree().expect("write tree");
         let tree2 = git_repo.find_tree(tree_oid2).expect("find tree");
@@ -319,7 +363,14 @@ mod tests {
         let bob_sig = git2::Signature::new("Bob", "bob@example.com", &time2).expect("bob sig");
         let parent1 = git_repo.find_commit(c1).expect("find alice commit");
         git_repo
-            .commit(Some("HEAD"), &bob_sig, &bob_sig, "Bob commit", &tree2, &[&parent1])
+            .commit(
+                Some("HEAD"),
+                &bob_sig,
+                &bob_sig,
+                "Bob commit",
+                &tree2,
+                &[&parent1],
+            )
             .expect("bob commit");
 
         let store = MockStore::new();
@@ -331,7 +382,10 @@ mod tests {
             .sync_repo(&repo, &store, &config)
             .expect("sync_repo");
 
-        assert_eq!(summary.commits_indexed, 1, "should index 1 commit (Alice only)");
+        assert_eq!(
+            summary.commits_indexed, 1,
+            "should index 1 commit (Alice only)"
+        );
         assert_eq!(summary.commits_filtered, 1, "should filter 1 commit (Bob)");
 
         let commits = store.commits.lock().unwrap();
@@ -354,8 +408,12 @@ mod tests {
         std::fs::write(gen_dir.join("api.rs"), "// generated\n").expect("write api.rs");
 
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("src/main.rs")).expect("add src/main.rs");
-        index.add_path(std::path::Path::new("generated/api.rs")).expect("add generated/api.rs");
+        index
+            .add_path(std::path::Path::new("src/main.rs"))
+            .expect("add src/main.rs");
+        index
+            .add_path(std::path::Path::new("generated/api.rs"))
+            .expect("add generated/api.rs");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
@@ -400,7 +458,9 @@ mod tests {
         let file1 = dir.path().join("file1.txt");
         std::fs::write(&file1, "first\n").expect("write file1");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("file1.txt")).expect("add file1");
+        index
+            .add_path(std::path::Path::new("file1.txt"))
+            .expect("add file1");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
@@ -413,13 +473,22 @@ mod tests {
         let file2 = dir.path().join("file2.txt");
         std::fs::write(&file2, "second\n").expect("write file2");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("file2.txt")).expect("add file2");
+        index
+            .add_path(std::path::Path::new("file2.txt"))
+            .expect("add file2");
         index.write().expect("write index");
         let tree_oid2 = index.write_tree().expect("write tree");
         let tree2 = git_repo.find_tree(tree_oid2).expect("find tree");
         let parent1 = git_repo.find_commit(c1).expect("find c1");
         git_repo
-            .commit(Some("HEAD"), &sig, &sig, "Second commit", &tree2, &[&parent1])
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "Second commit",
+                &tree2,
+                &[&parent1],
+            )
             .expect("second commit");
 
         let store = MockStore::new();
@@ -431,14 +500,20 @@ mod tests {
             .sync_repo(&repo, &store, &config)
             .expect("sync_repo first run");
         assert_eq!(summary1.commits_indexed, 2, "first run: 2 commits indexed");
-        assert_eq!(summary1.commits_already_indexed, 0, "first run: 0 already-indexed");
+        assert_eq!(
+            summary1.commits_already_indexed, 0,
+            "first run: 0 already-indexed"
+        );
 
         // Second run: both commits already in store, both skipped
         let summary2 = Git2Ingester::new()
             .sync_repo(&repo, &store, &config)
             .expect("sync_repo second run");
         assert_eq!(summary2.commits_indexed, 0, "second run: 0 indexed");
-        assert_eq!(summary2.commits_already_indexed, 2, "second run: 2 already-indexed");
+        assert_eq!(
+            summary2.commits_already_indexed, 2,
+            "second run: 2 already-indexed"
+        );
     }
 
     #[test]
@@ -450,7 +525,9 @@ mod tests {
         let file1 = dir.path().join("a.txt");
         std::fs::write(&file1, "a\n").expect("write a.txt");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("a.txt")).expect("add a.txt");
+        index
+            .add_path(std::path::Path::new("a.txt"))
+            .expect("add a.txt");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
@@ -462,7 +539,9 @@ mod tests {
         let file2 = dir.path().join("b.txt");
         std::fs::write(&file2, "b\n").expect("write b.txt");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("b.txt")).expect("add b.txt");
+        index
+            .add_path(std::path::Path::new("b.txt"))
+            .expect("add b.txt");
         index.write().expect("write index");
         let tree_oid2 = index.write_tree().expect("write tree");
         let tree2 = git_repo.find_tree(tree_oid2).expect("find tree");
@@ -480,14 +559,20 @@ mod tests {
             .sync_repo(&repo, &store, &config)
             .expect("first sync");
         assert_eq!(summary1.commits_indexed, 2, "first sync: 2 indexed");
-        assert_eq!(summary1.commits_already_indexed, 0, "first sync: 0 already-indexed");
+        assert_eq!(
+            summary1.commits_already_indexed, 0,
+            "first sync: 0 already-indexed"
+        );
         assert_eq!(summary1.commits_filtered, 0, "first sync: 0 filtered");
 
         // Second sync: all commits already indexed
         let summary2 = Git2Ingester::new()
             .sync_repo(&repo, &store, &config)
             .expect("second sync");
-        assert!(summary2.commits_already_indexed > 0, "second sync: some already-indexed");
+        assert!(
+            summary2.commits_already_indexed > 0,
+            "second sync: some already-indexed"
+        );
         assert_eq!(summary2.commits_filtered, 0, "second sync: 0 filtered");
     }
 
@@ -500,7 +585,9 @@ mod tests {
         let file1 = dir.path().join("x.txt");
         std::fs::write(&file1, "x\n").expect("write x.txt");
         let mut index = git_repo.index().expect("get index");
-        index.add_path(std::path::Path::new("x.txt")).expect("add x.txt");
+        index
+            .add_path(std::path::Path::new("x.txt"))
+            .expect("add x.txt");
         index.write().expect("write index");
         let tree_oid = index.write_tree().expect("write tree");
         let tree = git_repo.find_tree(tree_oid).expect("find tree");
@@ -520,7 +607,10 @@ mod tests {
             .expect("sync_repo");
 
         assert!(summary.commits_filtered > 0, "should have filtered commits");
-        assert_eq!(summary.commits_already_indexed, 0, "should have 0 already-indexed");
+        assert_eq!(
+            summary.commits_already_indexed, 0,
+            "should have 0 already-indexed"
+        );
         assert_eq!(summary.commits_indexed, 0, "should have 0 indexed");
     }
 }

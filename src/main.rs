@@ -1,7 +1,7 @@
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
-use anyhow::{Context, Result};
 
 use commitmux_embed::EmbedConfig;
 use commitmux_ingest::Git2Ingester;
@@ -9,7 +9,11 @@ use commitmux_store::SqliteStore;
 use commitmux_types::{IgnoreConfig, Ingester, RepoInput, RepoUpdate, Store};
 
 #[derive(Parser)]
-#[command(name = "commitmux", about = "Cross-repo git history index for AI agents", version)]
+#[command(
+    name = "commitmux",
+    about = "Cross-repo git history index for AI agents",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -19,61 +23,115 @@ struct Cli {
 enum Commands {
     #[command(about = "Initialize the commitmux database")]
     Init {
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
     #[command(about = "Add a git repository to the index")]
     AddRepo {
-        #[arg(conflicts_with = "url", help = "Local path to a git repository (mutually exclusive with --url)")]
+        #[arg(
+            conflicts_with = "url",
+            help = "Local path to a git repository (mutually exclusive with --url)"
+        )]
         path: Option<PathBuf>,
         #[arg(long, help = "Override the repo name (default: directory name)")]
         name: Option<String>,
-        #[arg(long = "exclude", help = "Path prefix to exclude from indexing (repeatable)")]
+        #[arg(
+            long = "exclude",
+            help = "Path prefix to exclude from indexing (repeatable)"
+        )]
         exclude: Vec<String>,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
-        #[arg(conflicts_with = "path", long, help = "Remote git URL to clone and index")]
+        #[arg(
+            conflicts_with = "path",
+            long,
+            help = "Remote git URL to clone and index"
+        )]
         url: Option<String>,
-        #[arg(long = "fork-of", help = "Upstream repo URL; only index commits not in upstream")]
+        #[arg(
+            long = "fork-of",
+            help = "Upstream repo URL; only index commits not in upstream"
+        )]
         fork_of: Option<String>,
-        #[arg(long = "author", help = "Only index commits by this author (email match)")]
+        #[arg(
+            long = "author",
+            help = "Only index commits by this author (email match)"
+        )]
         author: Option<String>,
-        #[arg(long = "embed", help = "Enable semantic embeddings for this repo. Requires: 1) Ollama running, 2) embed.model configured (see: commitmux config --help)")]
+        #[arg(
+            long = "embed",
+            help = "Enable semantic embeddings for this repo. Requires: 1) Ollama running, 2) embed.model configured (see: commitmux config --help)"
+        )]
         embed: bool,
     },
     #[command(about = "Remove a repository and all its indexed commits")]
     RemoveRepo {
         #[arg(help = "Name of the indexed repository (see 'commitmux status')")]
         name: String,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
     #[command(about = "Update stored metadata for a repository")]
     UpdateRepo {
         #[arg(help = "Name of the indexed repository (see 'commitmux status')")]
         name: String,
-        #[arg(long = "fork-of", help = "Upstream repo URL; only index commits not in upstream")]
+        #[arg(
+            long = "fork-of",
+            help = "Upstream repo URL; only index commits not in upstream"
+        )]
         fork_of: Option<String>,
-        #[arg(long = "author", help = "Only index commits by this author (email match)")]
+        #[arg(
+            long = "author",
+            help = "Only index commits by this author (email match)"
+        )]
         author: Option<String>,
-        #[arg(long = "exclude", help = "Path prefix to exclude from indexing (repeatable)")]
+        #[arg(
+            long = "exclude",
+            help = "Path prefix to exclude from indexing (repeatable)"
+        )]
         exclude: Vec<String>,
         #[arg(long = "default-branch", help = "Set the default branch name")]
         default_branch: Option<String>,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
-        #[arg(long = "embed", conflicts_with = "no_embed", help = "Enable semantic embeddings for this repo")]
+        #[arg(
+            long = "embed",
+            conflicts_with = "no_embed",
+            help = "Enable semantic embeddings for this repo"
+        )]
         embed: bool,
-        #[arg(long = "no-embed", conflicts_with = "embed", help = "Disable semantic embeddings for this repo")]
+        #[arg(
+            long = "no-embed",
+            conflicts_with = "embed",
+            help = "Disable semantic embeddings for this repo"
+        )]
         no_embed: bool,
     },
     #[command(about = "Index new commits from one or all repositories")]
     Sync {
         #[arg(long, help = "Sync only this repo (default: sync all)")]
         repo: Option<String>,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
-        #[arg(long = "embed-only", help = "Generate embeddings for already-indexed commits; skip indexing new commits. Useful for backfilling when embeddings were enabled after initial sync.")]
+        #[arg(
+            long = "embed-only",
+            help = "Generate embeddings for already-indexed commits; skip indexing new commits. Useful for backfilling when embeddings were enabled after initial sync."
+        )]
         embed_only: bool,
     },
     #[command(about = "Show full details for a specific commit (JSON output)")]
@@ -82,24 +140,38 @@ enum Commands {
         repo: String,
         #[arg(help = "Full or prefix SHA of the commit")]
         sha: String,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
     #[command(about = "Show all indexed repositories with commit counts and sync times")]
     Status {
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
     #[command(about = "Start the MCP JSON-RPC server for AI agent access")]
     Serve {
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
-    #[command(about = "Get or set global configuration values. For semantic search: set embed.model (e.g. nomic-embed-text) and embed.endpoint (default: http://localhost:11434/v1). Requires Ollama running.")]
+    #[command(
+        about = "Get or set global configuration values. For semantic search: set embed.model (e.g. nomic-embed-text) and embed.endpoint (default: http://localhost:11434/v1). Requires Ollama running."
+    )]
     Config {
         #[command(subcommand)]
         action: ConfigAction,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
     },
 }
@@ -198,10 +270,22 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::AddRepo { path, name, exclude, db, url, fork_of, author, embed } => {
+        Commands::AddRepo {
+            path,
+            name,
+            exclude,
+            db,
+            url,
+            fork_of,
+            author,
+            embed,
+        } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -228,8 +312,9 @@ fn main() -> Result<()> {
 
                 println!("Cloning {} from {}...", repo_name, remote_url);
 
-                std::fs::create_dir_all(&clone_dir)
-                    .with_context(|| format!("Failed to create clone directory: {}", clone_dir.display()))?;
+                std::fs::create_dir_all(&clone_dir).with_context(|| {
+                    format!("Failed to create clone directory: {}", clone_dir.display())
+                })?;
 
                 let mut callbacks = git2::RemoteCallbacks::new();
                 callbacks.credentials(|_url, username, _allowed| {
@@ -239,8 +324,9 @@ fn main() -> Result<()> {
                 fo.remote_callbacks(callbacks);
                 let mut builder = git2::build::RepoBuilder::new();
                 builder.fetch_options(fo);
-                builder.clone(&remote_url, &clone_dir)
-                    .with_context(|| format!("Failed to clone '{}' from '{}'", repo_name, remote_url))?;
+                builder.clone(&remote_url, &clone_dir).with_context(|| {
+                    format!("Failed to clone '{}' from '{}'", repo_name, remote_url)
+                })?;
 
                 store.add_repo(&RepoInput {
                     name: repo_name.clone(),
@@ -266,8 +352,9 @@ fn main() -> Result<()> {
                 println!("Added repo '{}' at {}", repo_name, clone_dir.display());
             } else if let Some(local_path) = path {
                 // Local path ingestion
-                let canonical = local_path.canonicalize()
-                    .with_context(|| format!("Failed to canonicalize path: {}", local_path.display()))?;
+                let canonical = local_path.canonicalize().with_context(|| {
+                    format!("Failed to canonicalize path: {}", local_path.display())
+                })?;
 
                 // Verify the path is a git repository (discard libgit2 internals from error chain)
                 git2::Repository::open(&canonical).map_err(|_| {
@@ -313,7 +400,10 @@ fn main() -> Result<()> {
         Commands::RemoveRepo { name, db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -329,11 +419,15 @@ fn main() -> Result<()> {
             // Get commit count before deletion
             let count = store.count_commits_for_repo(repo.repo_id).unwrap_or(0);
 
-            store.remove_repo(&name)
+            store
+                .remove_repo(&name)
                 .with_context(|| format!("Failed to remove repo '{}'", name))?;
 
             if count > 0 {
-                println!("Removed repo '{}' ({} commits deleted from index)", name, count);
+                println!(
+                    "Removed repo '{}' ({} commits deleted from index)",
+                    name, count
+                );
             } else {
                 println!("Removed repo '{}'", name);
             }
@@ -345,16 +439,30 @@ fn main() -> Result<()> {
                 match std::fs::remove_dir_all(&local_path) {
                     Ok(_) => println!("Removed managed clone at {}", local_path.display()),
                     Err(e) => eprintln!(
-                        "Warning: failed to remove clone at {}: {}", local_path.display(), e
+                        "Warning: failed to remove clone at {}: {}",
+                        local_path.display(),
+                        e
                     ),
                 }
             }
         }
 
-        Commands::UpdateRepo { name, fork_of, author, exclude, default_branch, db, embed, no_embed } => {
+        Commands::UpdateRepo {
+            name,
+            fork_of,
+            author,
+            exclude,
+            default_branch,
+            db,
+            embed,
+            no_embed,
+        } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -365,11 +473,21 @@ fn main() -> Result<()> {
                 .ok_or_else(|| anyhow::anyhow!("Repo '{}' not found", name))?;
 
             // Build RepoUpdate: only set fields that were provided via CLI flags.
-            let embed_enabled = if embed { Some(true) } else if no_embed { Some(false) } else { None };
+            let embed_enabled = if embed {
+                Some(true)
+            } else if no_embed {
+                Some(false)
+            } else {
+                None
+            };
             let update = RepoUpdate {
                 fork_of: fork_of.map(Some),
                 author_filter: author.map(Some),
-                exclude_prefixes: if exclude.is_empty() { None } else { Some(exclude) },
+                exclude_prefixes: if exclude.is_empty() {
+                    None
+                } else {
+                    Some(exclude)
+                },
                 default_branch: default_branch.map(Some),
                 embed_enabled,
             };
@@ -380,7 +498,8 @@ fn main() -> Result<()> {
                 || update.default_branch.is_some()
                 || update.embed_enabled.is_some();
 
-            store.update_repo(repo.repo_id, &update)
+            store
+                .update_repo(repo.repo_id, &update)
                 .with_context(|| format!("Failed to update repo '{}'", name))?;
 
             if any_change {
@@ -390,10 +509,17 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Sync { repo, db, embed_only } => {
+        Commands::Sync {
+            repo,
+            db,
+            embed_only,
+        } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -422,7 +548,9 @@ fn main() -> Result<()> {
                                     .enable_all()
                                     .build()
                                     .expect("tokio runtime");
-                                match rt.block_on(commitmux_embed::embed_pending(&store, &embedder, r.repo_id, 50)) {
+                                match rt.block_on(commitmux_embed::embed_pending(
+                                    &store, &embedder, r.repo_id, 50,
+                                )) {
                                     Ok(esummary) => {
                                         println!(
                                             "Embedding '{}'... {} embedded, {} failed",
@@ -432,20 +560,29 @@ fn main() -> Result<()> {
                                         let now = std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap()
-                                            .as_secs() as i64;
-                                        let prev_state = store.get_ingest_state(r.repo_id).ok().flatten();
+                                            .as_secs()
+                                            as i64;
+                                        let prev_state =
+                                            store.get_ingest_state(r.repo_id).ok().flatten();
                                         let ingest_state = commitmux_types::IngestState {
                                             repo_id: r.repo_id,
                                             last_synced_at: now,
-                                            last_synced_sha: prev_state.as_ref().and_then(|s| s.last_synced_sha.clone()),
+                                            last_synced_sha: prev_state
+                                                .as_ref()
+                                                .and_then(|s| s.last_synced_sha.clone()),
                                             last_error: None,
                                         };
                                         let _ = store.update_ingest_state(&ingest_state);
                                     }
-                                    Err(e) => eprintln!("  Warning: embedding failed for '{}': {e}", r.name),
+                                    Err(e) => eprintln!(
+                                        "  Warning: embedding failed for '{}': {e}",
+                                        r.name
+                                    ),
                                 }
                             }
-                            Err(e) => eprintln!("  Warning: embed config error for '{}': {e}", r.name),
+                            Err(e) => {
+                                eprintln!("  Warning: embed config error for '{}': {e}", r.name)
+                            }
                         }
                     }
                 }
@@ -474,7 +611,8 @@ fn main() -> Result<()> {
                             for err in &summary.errors {
                                 eprintln!("  warning: {}", err);
                             }
-                            total_in_index += summary.commits_indexed + summary.commits_already_indexed;
+                            total_in_index +=
+                                summary.commits_indexed + summary.commits_already_indexed;
                         }
                         Err(e) => {
                             eprintln!("Error syncing '{}': {}", r.name, e);
@@ -491,16 +629,26 @@ fn main() -> Result<()> {
                                     .enable_all()
                                     .build()
                                     .expect("tokio runtime");
-                                match rt.block_on(commitmux_embed::embed_pending(&store, &embedder, r.repo_id, 50)) {
+                                match rt.block_on(commitmux_embed::embed_pending(
+                                    &store, &embedder, r.repo_id, 50,
+                                )) {
                                     Ok(esummary) => {
                                         if esummary.embedded > 0 || esummary.failed > 0 {
-                                            println!("  Embedded {} commits ({} failed)", esummary.embedded, esummary.failed);
+                                            println!(
+                                                "  Embedded {} commits ({} failed)",
+                                                esummary.embedded, esummary.failed
+                                            );
                                         }
                                     }
-                                    Err(e) => eprintln!("  Warning: embedding failed for '{}': {e}", r.name),
+                                    Err(e) => eprintln!(
+                                        "  Warning: embedding failed for '{}': {e}",
+                                        r.name
+                                    ),
                                 }
                             }
-                            Err(e) => eprintln!("  Warning: embed config error for '{}': {e}", r.name),
+                            Err(e) => {
+                                eprintln!("  Warning: embed config error for '{}': {e}", r.name)
+                            }
                         }
                     }
                 }
@@ -510,7 +658,9 @@ fn main() -> Result<()> {
                 }
 
                 if total_in_index > 0 {
-                    println!("Tip: run 'commitmux serve' to expose this index via MCP to AI agents.");
+                    println!(
+                        "Tip: run 'commitmux serve' to expose this index via MCP to AI agents."
+                    );
                 }
             }
         }
@@ -518,12 +668,18 @@ fn main() -> Result<()> {
         Commands::Show { repo, sha, db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
-            match store.get_commit(&repo, &sha).context("Failed to get commit")? {
+            match store
+                .get_commit(&repo, &sha)
+                .context("Failed to get commit")?
+            {
                 None => {
                     eprintln!("Error: Commit '{}' not found in repo '{}'", sha, repo);
                     std::process::exit(1);
@@ -539,7 +695,10 @@ fn main() -> Result<()> {
         Commands::Status { db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -555,9 +714,15 @@ fn main() -> Result<()> {
             let any_embed = repos.iter().any(|r| r.embed_enabled);
 
             if any_embed {
-                println!("{:<20} {:>8}  {:<45}  {:<22}  EMBED", "REPO", "COMMITS", "SOURCE", "LAST SYNCED");
+                println!(
+                    "{:<20} {:>8}  {:<45}  {:<22}  EMBED",
+                    "REPO", "COMMITS", "SOURCE", "LAST SYNCED"
+                );
             } else {
-                println!("{:<20} {:>8}  {:<45}  LAST SYNCED", "REPO", "COMMITS", "SOURCE");
+                println!(
+                    "{:<20} {:>8}  {:<45}  LAST SYNCED",
+                    "REPO", "COMMITS", "SOURCE"
+                );
             }
 
             for r in &repos {
@@ -573,7 +738,10 @@ fn main() -> Result<()> {
                     }
                 };
 
-                match store.repo_stats(r.repo_id).with_context(|| format!("Failed to get stats for '{}'", r.name)) {
+                match store
+                    .repo_stats(r.repo_id)
+                    .with_context(|| format!("Failed to get stats for '{}'", r.name))
+                {
                     Ok(stats) => {
                         let last_synced = stats
                             .last_synced_at
@@ -581,8 +749,8 @@ fn main() -> Result<()> {
                             .unwrap_or_else(|| "never".to_string());
                         if any_embed {
                             let embed_col = if r.embed_enabled {
-                                let embedding_count = store.count_embeddings_for_repo(r.repo_id)
-                                    .unwrap_or(0);
+                                let embedding_count =
+                                    store.count_embeddings_for_repo(r.repo_id).unwrap_or(0);
                                 if embedding_count == stats.commit_count {
                                     "✓"
                                 } else {
@@ -591,9 +759,15 @@ fn main() -> Result<()> {
                             } else {
                                 "-"
                             };
-                            println!("{:<20} {:>8}  {:<45}  {:<22}  {}", r.name, stats.commit_count, source, last_synced, embed_col);
+                            println!(
+                                "{:<20} {:>8}  {:<45}  {:<22}  {}",
+                                r.name, stats.commit_count, source, last_synced, embed_col
+                            );
                         } else {
-                            println!("{:<20} {:>8}  {:<45}  {}", r.name, stats.commit_count, source, last_synced);
+                            println!(
+                                "{:<20} {:>8}  {:<45}  {}",
+                                r.name, stats.commit_count, source, last_synced
+                            );
                         }
                     }
                     Err(e) => {
@@ -615,18 +789,30 @@ fn main() -> Result<()> {
             }
 
             if any_embed {
-                let model = store.get_config("embed.model").ok().flatten()
+                let model = store
+                    .get_config("embed.model")
+                    .ok()
+                    .flatten()
                     .unwrap_or_else(|| "nomic-embed-text (default)".into());
-                let endpoint = store.get_config("embed.endpoint").ok().flatten()
+                let endpoint = store
+                    .get_config("embed.endpoint")
+                    .ok()
+                    .flatten()
                     .unwrap_or_else(|| "http://localhost:11434/v1 (default)".into());
-                println!("\nEmbedding model: {} ({}) — ✓ = complete, ⋯ = pending", model, endpoint);
+                println!(
+                    "\nEmbedding model: {} ({}) — ✓ = complete, ⋯ = pending",
+                    model, endpoint
+                );
             }
         }
 
         Commands::Serve { db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -638,7 +824,10 @@ fn main() -> Result<()> {
         Commands::Config { action, db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
-                anyhow::bail!("Database not found at {}. Run 'commitmux init' first.", db_path.display());
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
@@ -655,7 +844,9 @@ fn main() -> Result<()> {
                     if value.trim().is_empty() {
                         anyhow::bail!("Value for '{}' cannot be empty", key);
                     }
-                    store.set_config(&key, &value).context("Failed to set config")?;
+                    store
+                        .set_config(&key, &value)
+                        .context("Failed to set config")?;
                     println!("Set {} = {}", key, value);
                 }
                 ConfigAction::Get { key } => {
@@ -686,36 +877,46 @@ mod tests {
     #[test]
     fn test_add_repo_persists_author_filter() {
         let (store, _dir) = temp_store();
-        store.add_repo(&RepoInput {
-            name: "myrepo".into(),
-            local_path: std::path::PathBuf::from("/tmp/myrepo"),
-            remote_url: None,
-            default_branch: None,
-            fork_of: None,
-            author_filter: Some("alice@example.com".into()),
-            exclude_prefixes: vec![],
-            embed_enabled: false,
-        }).expect("add_repo");
+        store
+            .add_repo(&RepoInput {
+                name: "myrepo".into(),
+                local_path: std::path::PathBuf::from("/tmp/myrepo"),
+                remote_url: None,
+                default_branch: None,
+                fork_of: None,
+                author_filter: Some("alice@example.com".into()),
+                exclude_prefixes: vec![],
+                embed_enabled: false,
+            })
+            .expect("add_repo");
 
-        let repo = store.get_repo_by_name("myrepo").expect("get").expect("some");
+        let repo = store
+            .get_repo_by_name("myrepo")
+            .expect("get")
+            .expect("some");
         assert_eq!(repo.author_filter, Some("alice@example.com".to_string()));
     }
 
     #[test]
     fn test_add_repo_persists_exclude_prefixes() {
         let (store, _dir) = temp_store();
-        store.add_repo(&RepoInput {
-            name: "myrepo".into(),
-            local_path: std::path::PathBuf::from("/tmp/myrepo"),
-            remote_url: None,
-            default_branch: None,
-            fork_of: None,
-            author_filter: None,
-            exclude_prefixes: vec!["dist/".into(), "vendor/".into()],
-            embed_enabled: false,
-        }).expect("add_repo");
+        store
+            .add_repo(&RepoInput {
+                name: "myrepo".into(),
+                local_path: std::path::PathBuf::from("/tmp/myrepo"),
+                remote_url: None,
+                default_branch: None,
+                fork_of: None,
+                author_filter: None,
+                exclude_prefixes: vec!["dist/".into(), "vendor/".into()],
+                embed_enabled: false,
+            })
+            .expect("add_repo");
 
-        let repo = store.get_repo_by_name("myrepo").expect("get").expect("some");
+        let repo = store
+            .get_repo_by_name("myrepo")
+            .expect("get")
+            .expect("some");
         assert_eq!(repo.exclude_prefixes, vec!["dist/", "vendor/"]);
     }
 
@@ -730,7 +931,10 @@ mod tests {
             result
         );
         // Verify it's a non-trivial formatted string
-        assert!(result.len() > 4, "timestamp should be more than just ' UTC'");
+        assert!(
+            result.len() > 4,
+            "timestamp should be more than just ' UTC'"
+        );
     }
 
     #[test]
@@ -812,7 +1016,9 @@ mod tests {
     #[test]
     fn test_config_set_get_roundtrip() {
         let (store, _dir) = temp_store();
-        store.set_config("embed.model", "test-model").expect("set_config");
+        store
+            .set_config("embed.model", "test-model")
+            .expect("set_config");
         let value = store.get_config("embed.model").expect("get_config");
         assert_eq!(value, Some("test-model".to_string()));
     }
@@ -820,10 +1026,23 @@ mod tests {
     #[test]
     fn test_config_set_rejects_unknown_key() {
         const VALID_CONFIG_KEYS: &[&str] = &["embed.model", "embed.endpoint"];
-        assert!(VALID_CONFIG_KEYS.contains(&"embed.model"), "embed.model should be valid");
-        assert!(VALID_CONFIG_KEYS.contains(&"embed.endpoint"), "embed.endpoint should be valid");
-        assert_eq!(VALID_CONFIG_KEYS.len(), 2, "should have exactly 2 valid keys");
-        assert!(!VALID_CONFIG_KEYS.contains(&"embed.endpoint_url"), "embed.endpoint_url should be unknown");
+        assert!(
+            VALID_CONFIG_KEYS.contains(&"embed.model"),
+            "embed.model should be valid"
+        );
+        assert!(
+            VALID_CONFIG_KEYS.contains(&"embed.endpoint"),
+            "embed.endpoint should be valid"
+        );
+        assert_eq!(
+            VALID_CONFIG_KEYS.len(),
+            2,
+            "should have exactly 2 valid keys"
+        );
+        assert!(
+            !VALID_CONFIG_KEYS.contains(&"embed.endpoint_url"),
+            "embed.endpoint_url should be unknown"
+        );
     }
 
     #[test]
@@ -831,9 +1050,15 @@ mod tests {
         let empty = "";
         let whitespace = "   ";
         assert!(empty.trim().is_empty(), "empty string should be rejected");
-        assert!(whitespace.trim().is_empty(), "whitespace-only string should be rejected");
+        assert!(
+            whitespace.trim().is_empty(),
+            "whitespace-only string should be rejected"
+        );
         let valid = "some-model";
-        assert!(!valid.trim().is_empty(), "non-empty value should not be rejected");
+        assert!(
+            !valid.trim().is_empty(),
+            "non-empty value should not be rejected"
+        );
     }
 
     #[test]

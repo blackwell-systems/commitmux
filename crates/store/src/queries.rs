@@ -67,8 +67,8 @@ impl Store for SqliteStore {
 
     fn add_repo(&self, input: &RepoInput) -> Result<Repo> {
         let conn: MutexGuard<'_, Connection> = self.conn.lock().unwrap();
-        let exclude_json = serde_json::to_string(&input.exclude_prefixes)
-            .unwrap_or_else(|_| "[]".to_string());
+        let exclude_json =
+            serde_json::to_string(&input.exclude_prefixes).unwrap_or_else(|_| "[]".to_string());
         conn.execute(
             "INSERT INTO repos (name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
@@ -102,8 +102,7 @@ impl Store for SqliteStore {
         let mut stmt = conn.prepare(
             "SELECT repo_id, name, local_path, remote_url, default_branch, fork_of, author_filter, exclude_prefixes, embed_enabled FROM repos ORDER BY repo_id",
         )?;
-        let repos: rusqlite::Result<Vec<Repo>> =
-            stmt.query_map([], row_to_repo)?.collect();
+        let repos: rusqlite::Result<Vec<Repo>> = stmt.query_map([], row_to_repo)?.collect();
         Ok(repos?)
     }
 
@@ -223,8 +222,8 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
 
         // Compress the blob with zstd level 3.
-        let compressed =
-            zstd::encode_all(patch.patch_blob.as_slice(), 3).map_err(commitmux_types::CommitmuxError::Io)?;
+        let compressed = zstd::encode_all(patch.patch_blob.as_slice(), 3)
+            .map_err(commitmux_types::CommitmuxError::Io)?;
 
         conn.execute(
             "INSERT OR REPLACE INTO commit_patches (repo_id, sha, patch_blob)
@@ -371,13 +370,16 @@ impl Store for SqliteStore {
         let mut stmt = conn.prepare(&sql)?;
 
         // Build all params: query first, then dynamic ones.
-        let all_params: Vec<&dyn rusqlite::types::ToSql> = std::iter::once(&query as &dyn rusqlite::types::ToSql)
-            .chain(bind_vals.iter().map(|b| b.as_ref()))
-            .collect();
+        let all_params: Vec<&dyn rusqlite::types::ToSql> =
+            std::iter::once(&query as &dyn rusqlite::types::ToSql)
+                .chain(bind_vals.iter().map(|b| b.as_ref()))
+                .collect();
 
         #[allow(clippy::type_complexity)]
-        let rows: rusqlite::Result<Vec<(i64, String, String, String, i64, String, String)>> =
-            stmt.query_map(all_params.as_slice(), |row| {
+        let rows: rusqlite::Result<
+            Vec<(i64, String, String, String, i64, String, String)>,
+        > = stmt
+            .query_map(all_params.as_slice(), |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -417,8 +419,9 @@ impl Store for SqliteStore {
             let mut path_stmt = conn.prepare(
                 "SELECT path FROM commit_files WHERE repo_id = ?1 AND sha = ?2 ORDER BY path",
             )?;
-            let matched_paths: rusqlite::Result<Vec<String>> =
-                path_stmt.query_map(params![repo_id, sha], |r| r.get(0))?.collect();
+            let matched_paths: rusqlite::Result<Vec<String>> = path_stmt
+                .query_map(params![repo_id, sha], |r| r.get(0))?
+                .collect();
             let matched_paths = matched_paths?;
 
             let patch_excerpt: String = patch_preview.chars().take(300).collect();
@@ -488,8 +491,8 @@ impl Store for SqliteStore {
                 .chain(bind_vals.iter().map(|b| b.as_ref()))
                 .collect();
 
-        let rows: rusqlite::Result<Vec<TouchResult>> =
-            stmt.query_map(all_params.as_slice(), |row| {
+        let rows: rusqlite::Result<Vec<TouchResult>> = stmt
+            .query_map(all_params.as_slice(), |row| {
                 Ok(TouchResult {
                     path: row.get(0)?,
                     status: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
@@ -515,7 +518,16 @@ impl Store for SqliteStore {
                  WHERE r.name = ?1 AND c.sha LIKE ?2 || '%'
                  ORDER BY c.author_time DESC",
                 params![repo_name, sha_prefix],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
             )
             .optional()?;
 
@@ -527,8 +539,8 @@ impl Store for SqliteStore {
                     "SELECT path, status, old_path FROM commit_files
                      WHERE repo_id = ?1 AND sha = ?2 ORDER BY path",
                 )?;
-                let files: rusqlite::Result<Vec<CommitFileDetail>> =
-                    fstmt.query_map(params![repo_id, commit_sha], |row| {
+                let files: rusqlite::Result<Vec<CommitFileDetail>> = fstmt
+                    .query_map(params![repo_id, commit_sha], |row| {
                         Ok(CommitFileDetail {
                             path: row.get(0)?,
                             status: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
@@ -554,24 +566,34 @@ impl Store for SqliteStore {
     fn remove_repo(&self, name: &str) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         // 1. Look up repo_id
-        let repo_id: Option<i64> = conn.query_row(
-            "SELECT repo_id FROM repos WHERE name = ?1",
-            params![name],
-            |row| row.get(0),
-        ).optional()?;
+        let repo_id: Option<i64> = conn
+            .query_row(
+                "SELECT repo_id FROM repos WHERE name = ?1",
+                params![name],
+                |row| row.get(0),
+            )
+            .optional()?;
 
-        let repo_id = repo_id.ok_or_else(|| CommitmuxError::NotFound(
-            format!("repo '{}' not found", name)
-        ))?;
+        let repo_id = repo_id
+            .ok_or_else(|| CommitmuxError::NotFound(format!("repo '{}' not found", name)))?;
 
         // 2. Delete patches
-        conn.execute("DELETE FROM commit_patches WHERE repo_id = ?1", params![repo_id])?;
+        conn.execute(
+            "DELETE FROM commit_patches WHERE repo_id = ?1",
+            params![repo_id],
+        )?;
 
         // 3. Delete files
-        conn.execute("DELETE FROM commit_files WHERE repo_id = ?1", params![repo_id])?;
+        conn.execute(
+            "DELETE FROM commit_files WHERE repo_id = ?1",
+            params![repo_id],
+        )?;
 
         // 4. Delete ingest state
-        conn.execute("DELETE FROM ingest_state WHERE repo_id = ?1", params![repo_id])?;
+        conn.execute(
+            "DELETE FROM ingest_state WHERE repo_id = ?1",
+            params![repo_id],
+        )?;
 
         // 5. Delete commits (drop FTS entries first via rebuild after delete)
         conn.execute("DELETE FROM commits WHERE repo_id = ?1", params![repo_id])?;
@@ -668,19 +690,26 @@ impl Store for SqliteStore {
              LEFT JOIN commits c ON c.repo_id = r.repo_id
              LEFT JOIN ingest_state i ON i.repo_id = r.repo_id
              GROUP BY r.repo_id
-             ORDER BY r.repo_id"
+             ORDER BY r.repo_id",
         )?;
-        let rows: rusqlite::Result<Vec<RepoListEntry>> = stmt.query_map([], |row| {
-            Ok(RepoListEntry {
-                name: row.get(0)?,
-                commit_count: row.get::<_, i64>(1)? as usize,
-                last_synced_at: row.get(2)?,
-            })
-        })?.collect();
+        let rows: rusqlite::Result<Vec<RepoListEntry>> = stmt
+            .query_map([], |row| {
+                Ok(RepoListEntry {
+                    name: row.get(0)?,
+                    commit_count: row.get::<_, i64>(1)? as usize,
+                    last_synced_at: row.get(2)?,
+                })
+            })?
+            .collect();
         Ok(rows?)
     }
 
-    fn get_patch(&self, repo_name: &str, sha: &str, max_bytes: Option<usize>) -> Result<Option<PatchResult>> {
+    fn get_patch(
+        &self,
+        repo_name: &str,
+        sha: &str,
+        max_bytes: Option<usize>,
+    ) -> Result<Option<PatchResult>> {
         let conn = self.conn.lock().unwrap();
 
         let blob: Option<Vec<u8>> = conn
@@ -700,8 +729,7 @@ impl Store for SqliteStore {
                 let decompressed = zstd::decode_all(compressed.as_slice())
                     .map_err(commitmux_types::CommitmuxError::Io)?;
 
-                let mut patch_text =
-                    String::from_utf8_lossy(&decompressed).into_owned();
+                let mut patch_text = String::from_utf8_lossy(&decompressed).into_owned();
 
                 if let Some(max) = max_bytes {
                     if patch_text.len() > max {
@@ -781,11 +809,13 @@ impl Store for SqliteStore {
 
     fn get_config(&self, key: &str) -> Result<Option<String>> {
         let conn = self.conn.lock().unwrap();
-        let result = conn.query_row(
-            "SELECT value FROM config WHERE key = ?1",
-            params![key],
-            |row| row.get(0),
-        ).optional()?;
+        let result = conn
+            .query_row(
+                "SELECT value FROM config WHERE key = ?1",
+                params![key],
+                |row| row.get(0),
+            )
+            .optional()?;
         Ok(result)
     }
 
@@ -799,7 +829,11 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn get_commits_without_embeddings(&self, repo_id: i64, limit: usize) -> Result<Vec<EmbedCommit>> {
+    fn get_commits_without_embeddings(
+        &self,
+        repo_id: i64,
+        limit: usize,
+    ) -> Result<Vec<EmbedCommit>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT c.sha, c.subject, c.body, c.patch_preview,
@@ -819,7 +853,7 @@ impl Store for SqliteStore {
                     sha: row.get(0)?,
                     subject: row.get(1)?,
                     body: row.get(2)?,
-                    files_changed: vec![],  // empty for perf — patch_preview captures diff content
+                    files_changed: vec![], // empty for perf — patch_preview captures diff content
                     patch_preview: row.get(3)?,
                     author_name: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
                     author_time: row.get(5)?,
@@ -854,10 +888,7 @@ impl Store for SqliteStore {
             |row| row.get(0),
         )?;
         // Convert Vec<f32> to bytes for sqlite-vec
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
         // sqlite-vec vec0 tables don't support INSERT OR REPLACE; delete first for idempotency.
         conn.execute(
             "DELETE FROM commit_embeddings WHERE embed_id = ?1",
@@ -872,16 +903,19 @@ impl Store for SqliteStore {
         Ok(())
     }
 
-    fn search_semantic(&self, embedding: &[f32], opts: &SemanticSearchOpts) -> Result<Vec<SearchResult>> {
+    fn search_semantic(
+        &self,
+        embedding: &[f32],
+        opts: &SemanticSearchOpts,
+    ) -> Result<Vec<SearchResult>> {
         let conn = self.conn.lock().unwrap();
         let limit = opts.limit.unwrap_or(10);
 
-        let embedding_bytes: Vec<u8> = embedding
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect();
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
 
-        let repos_json = opts.repos.as_ref()
+        let repos_json = opts
+            .repos
+            .as_ref()
             .map(|r| serde_json::to_string(r).unwrap_or_else(|_| "[]".into()))
             .unwrap_or_else(|| "[]".into());
         let since = opts.since.unwrap_or(0);
@@ -903,18 +937,21 @@ impl Store for SqliteStore {
 
         let mut stmt = conn.prepare(sql)?;
         let results: rusqlite::Result<Vec<SearchResult>> = stmt
-            .query_map(params![embedding_bytes, limit as i64, repos_json, since], |row| {
-                Ok(SearchResult {
-                    repo: row.get(0)?,
-                    sha: row.get(1)?,
-                    subject: row.get(2)?,
-                    author: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                    date: row.get(4)?,
-                    matched_paths: vec![],
-                    patch_excerpt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                    score: Some(row.get::<_, f64>(6)? as f32),
-                })
-            })?
+            .query_map(
+                params![embedding_bytes, limit as i64, repos_json, since],
+                |row| {
+                    Ok(SearchResult {
+                        repo: row.get(0)?,
+                        sha: row.get(1)?,
+                        subject: row.get(2)?,
+                        author: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                        date: row.get(4)?,
+                        matched_paths: vec![],
+                        patch_excerpt: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                        score: Some(row.get::<_, f64>(6)? as f32),
+                    })
+                },
+            )?
             .collect();
         let results = results?;
 
@@ -922,12 +959,14 @@ impl Store for SqliteStore {
         if results.is_empty() {
             let repos_to_check: Vec<Repo> = if let Some(ref repo_names) = opts.repos {
                 // User specified repos - check only those
-                repo_names.iter()
+                repo_names
+                    .iter()
                     .filter_map(|name| self.get_repo_by_name(name).ok().flatten())
                     .collect()
             } else {
                 // No filter - check all repos with embed_enabled
-                self.list_repos()?.into_iter()
+                self.list_repos()?
+                    .into_iter()
                     .filter(|r| r.embed_enabled)
                     .collect()
             };
@@ -954,8 +993,8 @@ impl Store for SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commitmux_types::{Commit, RepoInput, Store};
     use crate::SqliteStore;
+    use commitmux_types::{Commit, RepoInput, Store};
     use std::path::PathBuf;
 
     fn make_store() -> SqliteStore {
@@ -994,23 +1033,57 @@ mod tests {
     #[test]
     fn test_count_commits_for_repo() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("countrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("countrepo"))
+            .expect("add repo");
 
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000001", "commit 1", 1700000000)).expect("upsert 1");
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000002", "commit 2", 1700000001)).expect("upsert 2");
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000003", "commit 3", 1700000002)).expect("upsert 3");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000001",
+                "commit 1",
+                1700000000,
+            ))
+            .expect("upsert 1");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000002",
+                "commit 2",
+                1700000001,
+            ))
+            .expect("upsert 2");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000003",
+                "commit 3",
+                1700000002,
+            ))
+            .expect("upsert 3");
 
-        let count = store.count_commits_for_repo(repo.repo_id).expect("count_commits_for_repo");
+        let count = store
+            .count_commits_for_repo(repo.repo_id)
+            .expect("count_commits_for_repo");
         assert_eq!(count, 3, "expected 3 commits for repo");
     }
 
     #[test]
     fn test_get_commit_date_is_iso8601() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("daterepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("daterepo"))
+            .expect("add repo");
 
         // UNIX epoch 0 = 1970-01-01T00:00:00Z
-        store.upsert_commit(&make_commit(repo.repo_id, "epoch000000000001", "epoch commit", 0)).expect("upsert epoch commit");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "epoch000000000001",
+                "epoch commit",
+                0,
+            ))
+            .expect("upsert epoch commit");
 
         let detail = store
             .get_commit("daterepo", "epoch000000000001")
@@ -1026,20 +1099,40 @@ mod tests {
     #[test]
     fn test_count_commits_after_remove() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("removecountrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("removecountrepo"))
+            .expect("add repo");
 
-        store.upsert_commit(&make_commit(repo.repo_id, "rc0000000000001a", "rc commit 1", 1700000000)).expect("upsert 1");
-        store.upsert_commit(&make_commit(repo.repo_id, "rc0000000000002b", "rc commit 2", 1700000001)).expect("upsert 2");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "rc0000000000001a",
+                "rc commit 1",
+                1700000000,
+            ))
+            .expect("upsert 1");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "rc0000000000002b",
+                "rc commit 2",
+                1700000001,
+            ))
+            .expect("upsert 2");
 
         // Verify commits are present before removal
-        let before = store.count_commits_for_repo(repo.repo_id).expect("count before remove");
+        let before = store
+            .count_commits_for_repo(repo.repo_id)
+            .expect("count before remove");
         assert_eq!(before, 2, "expected 2 commits before remove");
 
         // Remove the repo
         store.remove_repo("removecountrepo").expect("remove repo");
 
         // After removal, count_commits_for_repo on the old repo_id should return 0
-        let after = store.count_commits_for_repo(repo.repo_id).expect("count after remove");
+        let after = store
+            .count_commits_for_repo(repo.repo_id)
+            .expect("count after remove");
         assert_eq!(after, 0, "expected 0 commits after repo removal");
     }
 
@@ -1063,21 +1156,28 @@ mod tests {
         let repo = store.add_repo(&repo_input).expect("add repo");
 
         // Insert a commit
-        let commit = make_commit(repo.repo_id, "abc123def456", "Add semantic search feature", 1700000000);
+        let commit = make_commit(
+            repo.repo_id,
+            "abc123def456",
+            "Add semantic search feature",
+            1700000000,
+        );
         store.upsert_commit(&commit).expect("upsert commit");
 
         // Store an embedding with a test vector
         let embedding = vec![0.1; 768];
-        store.store_embedding(
-            repo.repo_id,
-            "abc123def456",
-            "Add semantic search feature",
-            "Test Author",
-            "semantic-test-repo",
-            1700000000,
-            Some("patch preview text"),
-            &embedding,
-        ).expect("store embedding");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "abc123def456",
+                "Add semantic search feature",
+                "Test Author",
+                "semantic-test-repo",
+                1700000000,
+                Some("patch preview text"),
+                &embedding,
+            )
+            .expect("store embedding");
 
         // Query with a similar vector
         let query_embedding = vec![0.1; 768];
@@ -1086,9 +1186,14 @@ mod tests {
             repos: None,
             since: None,
         };
-        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+        let results = store
+            .search_semantic(&query_embedding, &opts)
+            .expect("search_semantic");
 
-        assert!(results.len() > 0, "expected at least 1 result from semantic search");
+        assert!(
+            results.len() > 0,
+            "expected at least 1 result from semantic search"
+        );
         assert_eq!(results[0].sha, "abc123def456");
         assert_eq!(results[0].repo, "semantic-test-repo");
     }
@@ -1108,16 +1213,18 @@ mod tests {
             store.upsert_commit(&commit).expect("upsert commit");
 
             let embedding = vec![0.1 + (i as f32 * 0.01); 768];
-            store.store_embedding(
-                repo.repo_id,
-                &sha,
-                &subject,
-                "Test Author",
-                "limit-test-repo",
-                1700000000 + i,
-                Some("patch preview"),
-                &embedding,
-            ).expect("store embedding");
+            store
+                .store_embedding(
+                    repo.repo_id,
+                    &sha,
+                    &subject,
+                    "Test Author",
+                    "limit-test-repo",
+                    1700000000 + i,
+                    Some("patch preview"),
+                    &embedding,
+                )
+                .expect("store embedding");
         }
 
         // Query with limit=2
@@ -1127,7 +1234,9 @@ mod tests {
             repos: None,
             since: None,
         };
-        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+        let results = store
+            .search_semantic(&query_embedding, &opts)
+            .expect("search_semantic");
 
         assert_eq!(results.len(), 2, "expected exactly 2 results when limit=2");
     }
@@ -1146,34 +1255,48 @@ mod tests {
         let repo2 = store.add_repo(&repo2_input).expect("add repo2");
 
         // Insert commit + embedding for repo1
-        let commit1 = make_commit(repo1.repo_id, "repo1sha000000001", "Repo 1 commit", 1700000000);
-        store.upsert_commit(&commit1).expect("upsert commit1");
-        let embedding1 = vec![0.1; 768];
-        store.store_embedding(
+        let commit1 = make_commit(
             repo1.repo_id,
             "repo1sha000000001",
             "Repo 1 commit",
-            "Test Author",
-            "repo-one",
             1700000000,
-            Some("patch1"),
-            &embedding1,
-        ).expect("store embedding1");
+        );
+        store.upsert_commit(&commit1).expect("upsert commit1");
+        let embedding1 = vec![0.1; 768];
+        store
+            .store_embedding(
+                repo1.repo_id,
+                "repo1sha000000001",
+                "Repo 1 commit",
+                "Test Author",
+                "repo-one",
+                1700000000,
+                Some("patch1"),
+                &embedding1,
+            )
+            .expect("store embedding1");
 
         // Insert commit + embedding for repo2
-        let commit2 = make_commit(repo2.repo_id, "repo2sha000000002", "Repo 2 commit", 1700000001);
-        store.upsert_commit(&commit2).expect("upsert commit2");
-        let embedding2 = vec![0.1; 768];
-        store.store_embedding(
+        let commit2 = make_commit(
             repo2.repo_id,
             "repo2sha000000002",
             "Repo 2 commit",
-            "Test Author",
-            "repo-two",
             1700000001,
-            Some("patch2"),
-            &embedding2,
-        ).expect("store embedding2");
+        );
+        store.upsert_commit(&commit2).expect("upsert commit2");
+        let embedding2 = vec![0.1; 768];
+        store
+            .store_embedding(
+                repo2.repo_id,
+                "repo2sha000000002",
+                "Repo 2 commit",
+                "Test Author",
+                "repo-two",
+                1700000001,
+                Some("patch2"),
+                &embedding2,
+            )
+            .expect("store embedding2");
 
         // Query with repo filter for repo-one
         let query_embedding = vec![0.1; 768];
@@ -1182,23 +1305,46 @@ mod tests {
             repos: Some(vec!["repo-one".to_string()]),
             since: None,
         };
-        let results = store.search_semantic(&query_embedding, &opts).expect("search_semantic");
+        let results = store
+            .search_semantic(&query_embedding, &opts)
+            .expect("search_semantic");
 
         assert!(results.len() > 0, "expected at least 1 result");
         for result in &results {
-            assert_eq!(result.repo, "repo-one", "all results should be from repo-one");
+            assert_eq!(
+                result.repo, "repo-one",
+                "all results should be from repo-one"
+            );
         }
     }
 
     #[test]
     fn test_count_embeddings_for_repo_zero_when_none_exist() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("embedcountrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("embedcountrepo"))
+            .expect("add repo");
 
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000001", "commit 1", 1700000000)).expect("upsert 1");
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000002", "commit 2", 1700000001)).expect("upsert 2");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000001",
+                "commit 1",
+                1700000000,
+            ))
+            .expect("upsert 1");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000002",
+                "commit 2",
+                1700000001,
+            ))
+            .expect("upsert 2");
 
-        let count = store.count_embeddings_for_repo(repo.repo_id).expect("count_embeddings_for_repo");
+        let count = store
+            .count_embeddings_for_repo(repo.repo_id)
+            .expect("count_embeddings_for_repo");
         assert_eq!(count, 0, "expected 0 embeddings when none exist");
     }
 
@@ -1209,17 +1355,73 @@ mod tests {
         repo_input.embed_enabled = true;
         let repo = store.add_repo(&repo_input).expect("add repo");
 
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000003", "commit 1", 1700000000)).expect("upsert 1");
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000004", "commit 2", 1700000001)).expect("upsert 2");
-        store.upsert_commit(&make_commit(repo.repo_id, "sha0000000000005", "commit 3", 1700000002)).expect("upsert 3");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000003",
+                "commit 1",
+                1700000000,
+            ))
+            .expect("upsert 1");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000004",
+                "commit 2",
+                1700000001,
+            ))
+            .expect("upsert 2");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000005",
+                "commit 3",
+                1700000002,
+            ))
+            .expect("upsert 3");
 
         // Store embeddings for 3 commits
         let embedding = vec![0.1f32; 768];
-        store.store_embedding(repo.repo_id, "sha0000000000003", "commit 1", "Test Author", "embedcountrepo2", 1700000000, Some("patch"), &embedding).expect("store embedding 1");
-        store.store_embedding(repo.repo_id, "sha0000000000004", "commit 2", "Test Author", "embedcountrepo2", 1700000001, Some("patch"), &embedding).expect("store embedding 2");
-        store.store_embedding(repo.repo_id, "sha0000000000005", "commit 3", "Test Author", "embedcountrepo2", 1700000002, Some("patch"), &embedding).expect("store embedding 3");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "sha0000000000003",
+                "commit 1",
+                "Test Author",
+                "embedcountrepo2",
+                1700000000,
+                Some("patch"),
+                &embedding,
+            )
+            .expect("store embedding 1");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "sha0000000000004",
+                "commit 2",
+                "Test Author",
+                "embedcountrepo2",
+                1700000001,
+                Some("patch"),
+                &embedding,
+            )
+            .expect("store embedding 2");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "sha0000000000005",
+                "commit 3",
+                "Test Author",
+                "embedcountrepo2",
+                1700000002,
+                Some("patch"),
+                &embedding,
+            )
+            .expect("store embedding 3");
 
-        let count = store.count_embeddings_for_repo(repo.repo_id).expect("count_embeddings_for_repo");
+        let count = store
+            .count_embeddings_for_repo(repo.repo_id)
+            .expect("count_embeddings_for_repo");
         assert_eq!(count, 3, "expected 3 embeddings to match stored count");
     }
 }

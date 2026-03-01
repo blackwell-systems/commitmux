@@ -200,10 +200,7 @@ impl McpServer {
     }
 
     fn handle_tools_call(&self, id: &Value, params: &Value) -> Value {
-        let name = params
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or("");
+        let name = params.get("name").and_then(|n| n.as_str()).unwrap_or("");
         let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
         let result = match name {
@@ -250,9 +247,7 @@ impl McpServer {
         self.store
             .search(&input.query, &opts)
             .map_err(|e| e.to_string())
-            .and_then(|results| {
-                serde_json::to_string(&results).map_err(|e| e.to_string())
-            })
+            .and_then(|results| serde_json::to_string(&results).map_err(|e| e.to_string()))
     }
 
     fn call_touches(&self, arguments: &Value) -> Result<String, String> {
@@ -268,9 +263,7 @@ impl McpServer {
         self.store
             .touches(&input.path_glob, &opts)
             .map_err(|e| e.to_string())
-            .and_then(|results| {
-                serde_json::to_string(&results).map_err(|e| e.to_string())
-            })
+            .and_then(|results| serde_json::to_string(&results).map_err(|e| e.to_string()))
     }
 
     fn call_get_commit(&self, arguments: &Value) -> Result<String, String> {
@@ -281,9 +274,8 @@ impl McpServer {
             .get_commit(&input.repo, &input.sha)
             .map_err(|e| e.to_string())
             .and_then(|opt| {
-                let result = opt.ok_or_else(|| {
-                    format!("Commit {}:{} not found", input.repo, input.sha)
-                })?;
+                let result =
+                    opt.ok_or_else(|| format!("Commit {}:{} not found", input.repo, input.sha))?;
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             })
     }
@@ -292,9 +284,7 @@ impl McpServer {
         self.store
             .list_repos_with_stats()
             .map_err(|e| e.to_string())
-            .and_then(|entries| {
-                serde_json::to_string(&entries).map_err(|e| e.to_string())
-            })
+            .and_then(|entries| serde_json::to_string(&entries).map_err(|e| e.to_string()))
     }
 
     fn call_get_patch(&self, arguments: &Value) -> Result<String, String> {
@@ -305,9 +295,8 @@ impl McpServer {
             .get_patch(&input.repo, &input.sha, input.max_bytes)
             .map_err(|e| e.to_string())
             .and_then(|opt| {
-                let result = opt.ok_or_else(|| {
-                    format!("Patch {}:{} not found", input.repo, input.sha)
-                })?;
+                let result =
+                    opt.ok_or_else(|| format!("Patch {}:{} not found", input.repo, input.sha))?;
                 serde_json::to_string(&result).map_err(|e| e.to_string())
             })
     }
@@ -334,7 +323,8 @@ impl McpServer {
         if let Some(ref repos) = input.repos {
             let all_repos = self.store.list_repos().map_err(|e| e.to_string())?;
             let existing_names: Vec<&str> = all_repos.iter().map(|r| r.name.as_str()).collect();
-            let unknown: Vec<&str> = repos.iter()
+            let unknown: Vec<&str> = repos
+                .iter()
                 .filter(|r| !existing_names.contains(&r.as_str()))
                 .map(|s| s.as_str())
                 .collect();
@@ -362,7 +352,9 @@ impl McpServer {
             since: input.since,
             limit: input.limit,
         };
-        let results = self.store.search_semantic(&embedding, &opts)
+        let results = self
+            .store
+            .search_semantic(&embedding, &opts)
             .map_err(|e| format!("Semantic search failed: {e}"))?;
 
         serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
@@ -373,11 +365,11 @@ impl McpServer {
 mod tests {
     use super::*;
     use commitmux_types::{
-        CommitDetail, PatchResult, Result as StoreResult, SearchResult, Store, TouchResult,
-    };
-    use commitmux_types::{
         Commit, CommitFile, CommitPatch, EmbedCommit, IngestState, Repo, RepoInput, RepoListEntry,
         RepoStats, RepoUpdate, SearchOpts, SemanticSearchOpts, TouchOpts,
+    };
+    use commitmux_types::{
+        CommitDetail, PatchResult, Result as StoreResult, SearchResult, Store, TouchResult,
     };
 
     /// A minimal in-memory stub store for testing.
@@ -435,11 +427,7 @@ mod tests {
             }])
         }
 
-        fn touches(
-            &self,
-            path_glob: &str,
-            _opts: &TouchOpts,
-        ) -> StoreResult<Vec<TouchResult>> {
+        fn touches(&self, path_glob: &str, _opts: &TouchOpts) -> StoreResult<Vec<TouchResult>> {
             Ok(vec![TouchResult {
                 repo: "testrepo".into(),
                 sha: "def456".into(),
@@ -499,12 +487,40 @@ mod tests {
             Ok(0)
         }
 
-        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
-        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
-        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
+        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> {
+            Ok(None)
+        }
+        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> {
+            Ok(())
+        }
+        fn get_commits_without_embeddings(
+            &self,
+            _repo_id: i64,
+            _limit: usize,
+        ) -> StoreResult<Vec<EmbedCommit>> {
+            Ok(vec![])
+        }
         #[allow(clippy::too_many_arguments)]
-        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> StoreResult<()> { Ok(()) }
-        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> StoreResult<Vec<SearchResult>> { Ok(vec![]) }
+        fn store_embedding(
+            &self,
+            _repo_id: i64,
+            _sha: &str,
+            _subject: &str,
+            _author_name: &str,
+            _repo_name: &str,
+            _author_time: i64,
+            _patch_preview: Option<&str>,
+            _embedding: &[f32],
+        ) -> StoreResult<()> {
+            Ok(())
+        }
+        fn search_semantic(
+            &self,
+            _embedding: &[f32],
+            _opts: &SemanticSearchOpts,
+        ) -> StoreResult<Vec<SearchResult>> {
+            Ok(vec![])
+        }
     }
 
     fn make_server() -> McpServer {
@@ -528,7 +544,9 @@ mod tests {
                 },
             ])
         }
-        fn add_repo(&self, _: &RepoInput) -> StoreResult<Repo> { unimplemented!() }
+        fn add_repo(&self, _: &RepoInput) -> StoreResult<Repo> {
+            unimplemented!()
+        }
         fn list_repos(&self) -> StoreResult<Vec<Repo>> {
             Ok(vec![
                 Repo {
@@ -555,28 +573,93 @@ mod tests {
                 },
             ])
         }
-        fn get_repo_by_name(&self, _: &str) -> StoreResult<Option<Repo>> { unimplemented!() }
-        fn remove_repo(&self, _: &str) -> StoreResult<()> { unimplemented!() }
-        fn commit_exists(&self, _: i64, _: &str) -> StoreResult<bool> { unimplemented!() }
-        fn update_repo(&self, _: i64, _: &RepoUpdate) -> StoreResult<Repo> { unimplemented!() }
-        fn upsert_commit(&self, _: &Commit) -> StoreResult<()> { unimplemented!() }
-        fn upsert_commit_files(&self, _: &[CommitFile]) -> StoreResult<()> { unimplemented!() }
-        fn upsert_patch(&self, _: &CommitPatch) -> StoreResult<()> { unimplemented!() }
-        fn get_ingest_state(&self, _: i64) -> StoreResult<Option<IngestState>> { unimplemented!() }
-        fn update_ingest_state(&self, _: &IngestState) -> StoreResult<()> { unimplemented!() }
-        fn search(&self, _: &str, _: &SearchOpts) -> StoreResult<Vec<SearchResult>> { unimplemented!() }
-        fn touches(&self, _: &str, _: &TouchOpts) -> StoreResult<Vec<TouchResult>> { unimplemented!() }
-        fn get_commit(&self, _: &str, _: &str) -> StoreResult<Option<CommitDetail>> { unimplemented!() }
-        fn get_patch(&self, _: &str, _: &str, _: Option<usize>) -> StoreResult<Option<PatchResult>> { unimplemented!() }
-        fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> { unimplemented!() }
-        fn count_commits_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
-        fn count_embeddings_for_repo(&self, _: i64) -> StoreResult<usize> { Ok(0) }
-        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> { Ok(None) }
-        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> { Ok(()) }
-        fn get_commits_without_embeddings(&self, _repo_id: i64, _limit: usize) -> StoreResult<Vec<EmbedCommit>> { Ok(vec![]) }
+        fn get_repo_by_name(&self, _: &str) -> StoreResult<Option<Repo>> {
+            unimplemented!()
+        }
+        fn remove_repo(&self, _: &str) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn commit_exists(&self, _: i64, _: &str) -> StoreResult<bool> {
+            unimplemented!()
+        }
+        fn update_repo(&self, _: i64, _: &RepoUpdate) -> StoreResult<Repo> {
+            unimplemented!()
+        }
+        fn upsert_commit(&self, _: &Commit) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn upsert_commit_files(&self, _: &[CommitFile]) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn upsert_patch(&self, _: &CommitPatch) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn get_ingest_state(&self, _: i64) -> StoreResult<Option<IngestState>> {
+            unimplemented!()
+        }
+        fn update_ingest_state(&self, _: &IngestState) -> StoreResult<()> {
+            unimplemented!()
+        }
+        fn search(&self, _: &str, _: &SearchOpts) -> StoreResult<Vec<SearchResult>> {
+            unimplemented!()
+        }
+        fn touches(&self, _: &str, _: &TouchOpts) -> StoreResult<Vec<TouchResult>> {
+            unimplemented!()
+        }
+        fn get_commit(&self, _: &str, _: &str) -> StoreResult<Option<CommitDetail>> {
+            unimplemented!()
+        }
+        fn get_patch(
+            &self,
+            _: &str,
+            _: &str,
+            _: Option<usize>,
+        ) -> StoreResult<Option<PatchResult>> {
+            unimplemented!()
+        }
+        fn repo_stats(&self, _: i64) -> StoreResult<RepoStats> {
+            unimplemented!()
+        }
+        fn count_commits_for_repo(&self, _: i64) -> StoreResult<usize> {
+            Ok(0)
+        }
+        fn count_embeddings_for_repo(&self, _: i64) -> StoreResult<usize> {
+            Ok(0)
+        }
+        fn get_config(&self, _key: &str) -> StoreResult<Option<String>> {
+            Ok(None)
+        }
+        fn set_config(&self, _key: &str, _value: &str) -> StoreResult<()> {
+            Ok(())
+        }
+        fn get_commits_without_embeddings(
+            &self,
+            _repo_id: i64,
+            _limit: usize,
+        ) -> StoreResult<Vec<EmbedCommit>> {
+            Ok(vec![])
+        }
         #[allow(clippy::too_many_arguments)]
-        fn store_embedding(&self, _repo_id: i64, _sha: &str, _subject: &str, _author_name: &str, _repo_name: &str, _author_time: i64, _patch_preview: Option<&str>, _embedding: &[f32]) -> StoreResult<()> { Ok(()) }
-        fn search_semantic(&self, _embedding: &[f32], _opts: &SemanticSearchOpts) -> StoreResult<Vec<SearchResult>> { Ok(vec![]) }
+        fn store_embedding(
+            &self,
+            _repo_id: i64,
+            _sha: &str,
+            _subject: &str,
+            _author_name: &str,
+            _repo_name: &str,
+            _author_time: i64,
+            _patch_preview: Option<&str>,
+            _embedding: &[f32],
+        ) -> StoreResult<()> {
+            Ok(())
+        }
+        fn search_semantic(
+            &self,
+            _embedding: &[f32],
+            _opts: &SemanticSearchOpts,
+        ) -> StoreResult<Vec<SearchResult>> {
+            Ok(vec![])
+        }
     }
 
     #[test]
@@ -593,10 +676,7 @@ mod tests {
             .as_array()
             .expect("result.tools must be an array");
 
-        let tool_names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["name"].as_str())
-            .collect();
+        let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
         assert!(
             tool_names.contains(&"commitmux_search"),
@@ -643,7 +723,10 @@ mod tests {
         // Notifications have no "id" field
         let notif = r#"{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}"#;
         let result = server.handle_message(notif);
-        assert!(result.is_none(), "notifications must not produce a response");
+        assert!(
+            result.is_none(),
+            "notifications must not produce a response"
+        );
     }
 
     #[test]
@@ -663,8 +746,7 @@ mod tests {
         let response_str = server
             .handle_message(&request)
             .expect("tools/call must produce a response");
-        let response: Value =
-            serde_json::from_str(&response_str).expect("valid JSON");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
 
         assert_eq!(response["result"]["isError"], false);
         let text = response["result"]["content"][0]["text"]
@@ -711,10 +793,7 @@ mod tests {
             .as_array()
             .expect("result.tools must be an array");
 
-        let tool_names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["name"].as_str())
-            .collect();
+        let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
         assert!(
             tool_names.contains(&"commitmux_list_repos"),
@@ -755,8 +834,14 @@ mod tests {
     #[test]
     fn test_startup_message_string() {
         let msg = "commitmux MCP server ready (JSON-RPC over stdio). Ctrl+C to stop.";
-        assert!(msg.contains("JSON-RPC over stdio"), "startup message should mention transport");
-        assert!(msg.contains("Ctrl+C"), "startup message should mention how to stop");
+        assert!(
+            msg.contains("JSON-RPC over stdio"),
+            "startup message should mention transport"
+        );
+        assert!(
+            msg.contains("Ctrl+C"),
+            "startup message should mention how to stop"
+        );
         assert!(!msg.is_empty());
     }
 
@@ -774,10 +859,7 @@ mod tests {
             .as_array()
             .expect("result.tools must be an array");
 
-        let tool_names: Vec<&str> = tools
-            .iter()
-            .filter_map(|t| t["name"].as_str())
-            .collect();
+        let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
 
         assert!(
             tool_names.contains(&"commitmux_search_semantic"),

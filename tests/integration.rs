@@ -39,22 +39,13 @@ fn test_end_to_end() {
     std::fs::create_dir_all(&src_path).unwrap();
     std::fs::write(src_path.join("main.rs"), "fn main() {}\n").unwrap();
     let mut index = git_repo.index().unwrap();
-    index
-        .add_path(std::path::Path::new("src/main.rs"))
-        .unwrap();
+    index.add_path(std::path::Path::new("src/main.rs")).unwrap();
     index.write().unwrap();
     let tree_oid = index.write_tree().unwrap();
     let tree = git_repo.find_tree(tree_oid).unwrap();
     let parent = git_repo.head().unwrap().peel_to_commit().unwrap();
     git_repo
-        .commit(
-            Some("HEAD"),
-            &sig,
-            &sig,
-            "add main.rs",
-            &tree,
-            &[&parent],
-        )
+        .commit(Some("HEAD"), &sig, &sig, "add main.rs", &tree, &[&parent])
         .unwrap();
 
     // 3. Open store, add repo, sync
@@ -75,10 +66,7 @@ fn test_end_to_end() {
     let config = IgnoreConfig::default();
     let summary = ingester.sync_repo(&repo, &store, &config).unwrap();
 
-    assert_eq!(
-        summary.commits_indexed, 2,
-        "Expected 2 commits indexed"
-    );
+    assert_eq!(summary.commits_indexed, 2, "Expected 2 commits indexed");
     assert!(
         summary.errors.is_empty(),
         "Expected no errors: {:?}",

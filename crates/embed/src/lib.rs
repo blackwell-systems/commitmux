@@ -154,10 +154,7 @@ pub async fn embed_pending(
                     ) {
                         Ok(()) => summary.embedded += 1,
                         Err(e) => {
-                            eprintln!(
-                                "embed: failed to store embedding for {}: {e}",
-                                commit.sha
-                            );
+                            eprintln!("embed: failed to store embedding for {}: {e}", commit.sha);
                             summary.failed += 1;
                         }
                     }
@@ -184,9 +181,7 @@ pub async fn embed_pending(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commitmux_types::{
-        EmbedCommit, Result, SearchResult, SemanticSearchOpts, Store,
-    };
+    use commitmux_types::{EmbedCommit, Result, SearchResult, SemanticSearchOpts, Store};
 
     // ── NullStore mock ──────────────────────────────────────────────────────
     // NOTE: This will fail to compile because Wave 1A's new methods don't exist
@@ -351,7 +346,10 @@ mod tests {
             doc.contains("This commit adds a great new feature"),
             "should contain body"
         );
-        assert!(doc.contains("Files changed:"), "should contain files header");
+        assert!(
+            doc.contains("Files changed:"),
+            "should contain files header"
+        );
         assert!(doc.contains("src/main.rs"), "should contain file path");
         assert!(doc.contains("src/lib.rs"), "should contain file path");
         assert!(
@@ -387,8 +385,8 @@ mod tests {
     #[test]
     fn test_embed_config_defaults() {
         let store = NullStore;
-        let config = EmbedConfig::from_store(&store)
-            .expect("from_store should succeed with NullStore");
+        let config =
+            EmbedConfig::from_store(&store).expect("from_store should succeed with NullStore");
         assert_eq!(config.model, "nomic-embed-text");
         assert_eq!(config.endpoint, "http://localhost:11434/v1");
     }
@@ -396,7 +394,8 @@ mod tests {
     #[test]
     fn test_connection_error_detection() {
         // Verify that errors containing "error sending request" are detected as connection errors
-        let conn_err = anyhow::anyhow!("error sending request for url (http://localhost:11434/v1/embeddings)");
+        let conn_err =
+            anyhow::anyhow!("error sending request for url (http://localhost:11434/v1/embeddings)");
         assert!(
             is_connection_error(&conn_err),
             "should detect 'error sending request' as a connection error"
@@ -416,7 +415,8 @@ mod tests {
             "should not detect 'model not found' as a connection error"
         );
 
-        let bad_response_err = anyhow::anyhow!("unexpected response status: 500 Internal Server Error");
+        let bad_response_err =
+            anyhow::anyhow!("unexpected response status: 500 Internal Server Error");
         assert!(
             !is_connection_error(&bad_response_err),
             "should not detect a bad response as a connection error"

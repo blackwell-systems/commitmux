@@ -1,8 +1,8 @@
-mod schema;
 mod queries;
+mod schema;
 
-use std::sync::Mutex;
 use commitmux_types::Result;
+use std::sync::Mutex;
 
 /// SQLite-backed implementation of the [`commitmux_types::Store`] trait.
 pub struct SqliteStore {
@@ -76,7 +76,9 @@ impl SqliteStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use commitmux_types::{Commit, CommitFile, CommitPatch, FileStatus, RepoInput, RepoUpdate, SearchOpts, Store};
+    use commitmux_types::{
+        Commit, CommitFile, CommitPatch, FileStatus, RepoInput, RepoUpdate, SearchOpts, Store,
+    };
     use std::path::PathBuf;
 
     fn make_store() -> SqliteStore {
@@ -116,7 +118,9 @@ mod tests {
     fn test_add_repo_and_list() {
         let store = make_store();
 
-        store.add_repo(&make_repo_input("alpha")).expect("add alpha");
+        store
+            .add_repo(&make_repo_input("alpha"))
+            .expect("add alpha");
         store.add_repo(&make_repo_input("beta")).expect("add beta");
 
         let repos = store.list_repos().expect("list repos");
@@ -131,7 +135,9 @@ mod tests {
     fn test_upsert_commit_idempotent() {
         let store = make_store();
 
-        let repo = store.add_repo(&make_repo_input("myrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("myrepo"))
+            .expect("add repo");
         let commit = make_commit(repo.repo_id, "deadbeef", "First commit");
 
         store.upsert_commit(&commit).expect("first upsert");
@@ -153,7 +159,9 @@ mod tests {
     fn test_search_fts() {
         let store = make_store();
 
-        let repo = store.add_repo(&make_repo_input("searchrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("searchrepo"))
+            .expect("add repo");
         let commit = make_commit(repo.repo_id, "cafebabe", "xyzzy_unique_token initial work");
         store.upsert_commit(&commit).expect("upsert commit");
 
@@ -179,7 +187,9 @@ mod tests {
         let store = make_store();
 
         // Add a repo and upsert a commit with files and a patch
-        let repo = store.add_repo(&make_repo_input("rmrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("rmrepo"))
+            .expect("add repo");
         let commit = make_commit(repo.repo_id, "deadbeef01234567", "remove test commit");
         store.upsert_commit(&commit).expect("upsert commit");
 
@@ -209,11 +219,15 @@ mod tests {
         assert!(repos.is_empty(), "expected no repos after remove");
 
         // get_commit should return None
-        let detail = store.get_commit("rmrepo", "deadbeef01234567").expect("get_commit after remove");
+        let detail = store
+            .get_commit("rmrepo", "deadbeef01234567")
+            .expect("get_commit after remove");
         assert!(detail.is_none(), "expected no commit after remove");
 
         // FTS search should return empty
-        let results = store.search("remove test commit", &SearchOpts::default()).expect("search");
+        let results = store
+            .search("remove test commit", &SearchOpts::default())
+            .expect("search");
         assert!(results.is_empty(), "expected no FTS results after remove");
     }
 
@@ -233,28 +247,38 @@ mod tests {
     #[test]
     fn test_commit_exists() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("existsrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("existsrepo"))
+            .expect("add repo");
         let commit = make_commit(repo.repo_id, "abc123def456", "test commit");
         store.upsert_commit(&commit).expect("upsert commit");
 
-        let exists = store.commit_exists(repo.repo_id, "abc123def456").expect("commit_exists");
+        let exists = store
+            .commit_exists(repo.repo_id, "abc123def456")
+            .expect("commit_exists");
         assert!(exists, "expected commit to exist");
 
-        let missing = store.commit_exists(repo.repo_id, "unknown").expect("commit_exists unknown");
+        let missing = store
+            .commit_exists(repo.repo_id, "unknown")
+            .expect("commit_exists unknown");
         assert!(!missing, "expected unknown sha to not exist");
     }
 
     #[test]
     fn test_update_repo_author_filter() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("updaterepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("updaterepo"))
+            .expect("add repo");
 
         // Set author_filter
         let update = RepoUpdate {
             author_filter: Some(Some("alice@example.com".into())),
             ..RepoUpdate::default()
         };
-        let updated = store.update_repo(repo.repo_id, &update).expect("update_repo set");
+        let updated = store
+            .update_repo(repo.repo_id, &update)
+            .expect("update_repo set");
         assert_eq!(
             updated.author_filter,
             Some("alice@example.com".to_string()),
@@ -266,42 +290,69 @@ mod tests {
             author_filter: Some(None),
             ..RepoUpdate::default()
         };
-        let cleared = store.update_repo(repo.repo_id, &clear).expect("update_repo clear");
-        assert!(cleared.author_filter.is_none(), "expected author_filter to be cleared");
+        let cleared = store
+            .update_repo(repo.repo_id, &clear)
+            .expect("update_repo clear");
+        assert!(
+            cleared.author_filter.is_none(),
+            "expected author_filter to be cleared"
+        );
     }
 
     #[test]
     fn test_list_repos_with_stats() {
         let store = make_store();
-        let repo1 = store.add_repo(&make_repo_input("statsrepo1")).expect("add repo1");
-        let repo2 = store.add_repo(&make_repo_input("statsrepo2")).expect("add repo2");
+        let repo1 = store
+            .add_repo(&make_repo_input("statsrepo1"))
+            .expect("add repo1");
+        let repo2 = store
+            .add_repo(&make_repo_input("statsrepo2"))
+            .expect("add repo2");
 
         // 1 commit for repo1
-        store.upsert_commit(&make_commit(repo1.repo_id, "aaa111", "commit for r1")).expect("upsert");
+        store
+            .upsert_commit(&make_commit(repo1.repo_id, "aaa111", "commit for r1"))
+            .expect("upsert");
 
         // 2 commits for repo2
-        store.upsert_commit(&make_commit(repo2.repo_id, "bbb222", "commit1 for r2")).expect("upsert");
-        store.upsert_commit(&make_commit(repo2.repo_id, "ccc333", "commit2 for r2")).expect("upsert");
+        store
+            .upsert_commit(&make_commit(repo2.repo_id, "bbb222", "commit1 for r2"))
+            .expect("upsert");
+        store
+            .upsert_commit(&make_commit(repo2.repo_id, "ccc333", "commit2 for r2"))
+            .expect("upsert");
 
-        let entries = store.list_repos_with_stats().expect("list_repos_with_stats");
+        let entries = store
+            .list_repos_with_stats()
+            .expect("list_repos_with_stats");
         assert_eq!(entries.len(), 2, "expected 2 entries");
 
-        let e1 = entries.iter().find(|e| e.name == "statsrepo1").expect("statsrepo1");
+        let e1 = entries
+            .iter()
+            .find(|e| e.name == "statsrepo1")
+            .expect("statsrepo1");
         assert_eq!(e1.commit_count, 1, "expected 1 commit for statsrepo1");
 
-        let e2 = entries.iter().find(|e| e.name == "statsrepo2").expect("statsrepo2");
+        let e2 = entries
+            .iter()
+            .find(|e| e.name == "statsrepo2")
+            .expect("statsrepo2");
         assert_eq!(e2.commit_count, 2, "expected 2 commits for statsrepo2");
     }
 
     #[test]
     fn test_get_commit_short_sha() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("shortsharepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("shortsharepo"))
+            .expect("add repo");
         // SHA starts with deadbe
         let commit = make_commit(repo.repo_id, "deadbe1234567890", "short sha test");
         store.upsert_commit(&commit).expect("upsert commit");
 
-        let result = store.get_commit("shortsharepo", "deadbe").expect("get_commit prefix");
+        let result = store
+            .get_commit("shortsharepo", "deadbe")
+            .expect("get_commit prefix");
         assert!(result.is_some(), "expected commit via prefix");
         let detail = result.unwrap();
         assert_eq!(detail.sha, "deadbe1234567890");
@@ -359,8 +410,14 @@ mod tests {
         };
         store.add_repo(&input).expect("add repo");
 
-        let repo = store.get_repo_by_name("prefixrepo").expect("get_repo_by_name").expect("should exist");
-        assert_eq!(repo.exclude_prefixes, vec!["dist/".to_string(), "vendor/".to_string()]);
+        let repo = store
+            .get_repo_by_name("prefixrepo")
+            .expect("get_repo_by_name")
+            .expect("should exist");
+        assert_eq!(
+            repo.exclude_prefixes,
+            vec!["dist/".to_string(), "vendor/".to_string()]
+        );
     }
 
     // ── New embedding tests ──────────────────────────────────────────────
@@ -368,81 +425,119 @@ mod tests {
     #[test]
     fn test_get_set_config() {
         let store = make_store();
-        store.set_config("embed.model", "nomic-embed-text").expect("set_config");
+        store
+            .set_config("embed.model", "nomic-embed-text")
+            .expect("set_config");
         let val = store.get_config("embed.model").expect("get_config");
         assert_eq!(val, Some("nomic-embed-text".to_string()));
 
         // Overwrite
-        store.set_config("embed.model", "all-MiniLM-L6-v2").expect("set_config overwrite");
+        store
+            .set_config("embed.model", "all-MiniLM-L6-v2")
+            .expect("set_config overwrite");
         let val2 = store.get_config("embed.model").expect("get_config 2");
         assert_eq!(val2, Some("all-MiniLM-L6-v2".to_string()));
 
         // Missing key
-        let missing = store.get_config("embed.nonexistent").expect("get_config missing");
+        let missing = store
+            .get_config("embed.nonexistent")
+            .expect("get_config missing");
         assert_eq!(missing, None);
     }
 
     #[test]
     fn test_get_commits_without_embeddings_returns_unembedded() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("embedrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("embedrepo"))
+            .expect("add repo");
 
         // Add 2 commits
-        store.upsert_commit(&make_commit(repo.repo_id, "embedsha0000001", "first commit")).expect("upsert 1");
-        store.upsert_commit(&make_commit(repo.repo_id, "embedsha0000002", "second commit")).expect("upsert 2");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "embedsha0000001",
+                "first commit",
+            ))
+            .expect("upsert 1");
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "embedsha0000002",
+                "second commit",
+            ))
+            .expect("upsert 2");
 
         // Both should be returned initially
-        let unembedded = store.get_commits_without_embeddings(repo.repo_id, 10).expect("get_commits_without_embeddings");
+        let unembedded = store
+            .get_commits_without_embeddings(repo.repo_id, 10)
+            .expect("get_commits_without_embeddings");
         assert_eq!(unembedded.len(), 2, "expected 2 unembedded commits");
 
         // Store embedding for the first commit — use 768-dim zero vector
         let embedding = vec![0.0f32; 768];
-        store.store_embedding(
-            repo.repo_id,
-            "embedsha0000001",
-            "first commit",
-            "Alice",
-            "embedrepo",
-            1700000000,
-            None,
-            &embedding,
-        ).expect("store_embedding");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "embedsha0000001",
+                "first commit",
+                "Alice",
+                "embedrepo",
+                1700000000,
+                None,
+                &embedding,
+            )
+            .expect("store_embedding");
 
         // Now only 1 should remain
-        let remaining = store.get_commits_without_embeddings(repo.repo_id, 10).expect("get_commits_without_embeddings 2");
-        assert_eq!(remaining.len(), 1, "expected 1 unembedded commit after storing one");
+        let remaining = store
+            .get_commits_without_embeddings(repo.repo_id, 10)
+            .expect("get_commits_without_embeddings 2");
+        assert_eq!(
+            remaining.len(),
+            1,
+            "expected 1 unembedded commit after storing one"
+        );
         assert_eq!(remaining[0].sha, "embedsha0000002");
     }
 
     #[test]
     fn test_store_embedding_idempotent() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("idemrepo")).expect("add repo");
-        store.upsert_commit(&make_commit(repo.repo_id, "idemsha0000001", "idem commit")).expect("upsert");
+        let repo = store
+            .add_repo(&make_repo_input("idemrepo"))
+            .expect("add repo");
+        store
+            .upsert_commit(&make_commit(repo.repo_id, "idemsha0000001", "idem commit"))
+            .expect("upsert");
 
         let embedding = vec![0.0f32; 768];
-        store.store_embedding(
-            repo.repo_id,
-            "idemsha0000001",
-            "idem commit",
-            "Alice",
-            "idemrepo",
-            1700000000,
-            None,
-            &embedding,
-        ).expect("store_embedding first");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "idemsha0000001",
+                "idem commit",
+                "Alice",
+                "idemrepo",
+                1700000000,
+                None,
+                &embedding,
+            )
+            .expect("store_embedding first");
 
         // Second call must not error
-        store.store_embedding(
-            repo.repo_id,
-            "idemsha0000001",
-            "idem commit",
-            "Alice",
-            "idemrepo",
-            1700000000,
-            None,
-            &embedding,
-        ).expect("store_embedding second (idempotent)");
+        store
+            .store_embedding(
+                repo.repo_id,
+                "idemsha0000001",
+                "idem commit",
+                "Alice",
+                "idemrepo",
+                1700000000,
+                None,
+                &embedding,
+            )
+            .expect("store_embedding second (idempotent)");
     }
 
     #[test]
@@ -459,29 +554,44 @@ mod tests {
             embed_enabled: true,
         };
         store.add_repo(&input).expect("add repo with embed_enabled");
-        let repo = store.get_repo_by_name("embedenabledrepo").expect("get_repo_by_name").expect("should exist");
+        let repo = store
+            .get_repo_by_name("embedenabledrepo")
+            .expect("get_repo_by_name")
+            .expect("should exist");
         assert!(repo.embed_enabled, "expected embed_enabled == true");
     }
 
     #[test]
     fn test_update_repo_embed_enabled() {
         let store = make_store();
-        let repo = store.add_repo(&make_repo_input("updateembedrepo")).expect("add repo");
-        assert!(!repo.embed_enabled, "expected embed_enabled == false initially");
+        let repo = store
+            .add_repo(&make_repo_input("updateembedrepo"))
+            .expect("add repo");
+        assert!(
+            !repo.embed_enabled,
+            "expected embed_enabled == false initially"
+        );
 
         let update = RepoUpdate {
             embed_enabled: Some(true),
             ..RepoUpdate::default()
         };
-        let updated = store.update_repo(repo.repo_id, &update).expect("update_repo");
-        assert!(updated.embed_enabled, "expected embed_enabled == true after update");
+        let updated = store
+            .update_repo(repo.repo_id, &update)
+            .expect("update_repo");
+        assert!(
+            updated.embed_enabled,
+            "expected embed_enabled == true after update"
+        );
     }
 
     #[test]
     fn test_get_patch_roundtrip() {
         let store = make_store();
 
-        let repo = store.add_repo(&make_repo_input("patchrepo")).expect("add repo");
+        let repo = store
+            .add_repo(&make_repo_input("patchrepo"))
+            .expect("add repo");
         let commit = make_commit(repo.repo_id, "1234abcd", "patch roundtrip test");
         store.upsert_commit(&commit).expect("upsert commit");
 
