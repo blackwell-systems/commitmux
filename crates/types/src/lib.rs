@@ -180,6 +180,82 @@ pub struct SemanticSearchOpts {
     pub limit: Option<usize>,       // default 10
 }
 
+// ── Memory types ──────────────────────────────────────────────────────────
+
+/// Source classification for memory documents.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum MemorySourceType {
+    SessionSummary,
+    Task,
+    Blocker,
+    MemoryFile,
+    Decision,
+}
+
+impl MemorySourceType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::SessionSummary => "session_summary",
+            Self::Task => "task",
+            Self::Blocker => "blocker",
+            Self::MemoryFile => "memory_file",
+            Self::Decision => "decision",
+        }
+    }
+
+    #[allow(clippy::should_implement_trait)]
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "session_summary" => Self::SessionSummary,
+            "task" => Self::Task,
+            "blocker" => Self::Blocker,
+            "decision" => Self::Decision,
+            _ => Self::MemoryFile,
+        }
+    }
+}
+
+/// A memory document stored in the index.
+#[derive(Debug, Clone)]
+pub struct MemoryDoc {
+    pub doc_id: i64,
+    pub source: String,
+    pub project: String,
+    pub source_type: MemorySourceType,
+    pub content: String,
+    pub file_mtime: i64,
+    pub created_at: i64,
+}
+
+/// Input for inserting/updating a memory document.
+#[derive(Debug, Clone)]
+pub struct MemoryDocInput {
+    pub source: String,
+    pub project: String,
+    pub source_type: MemorySourceType,
+    pub content: String,
+    pub file_mtime: i64,
+}
+
+/// Result type for memory search.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MemoryMatch {
+    pub doc_id: i64,
+    pub source: String,
+    pub project: String,
+    pub source_type: String,
+    pub content: String,
+    pub score: f32,
+}
+
+/// Options for memory search.
+#[derive(Debug, Clone, Default)]
+pub struct MemorySearchOpts {
+    pub project: Option<String>,
+    pub source_type: Option<String>,
+    pub limit: Option<usize>, // default 10
+}
+
 // ── MCP response types ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -332,6 +408,17 @@ pub trait Store: Send + Sync {
         embedding: &[f32],
         opts: &SemanticSearchOpts,
     ) -> Result<Vec<SearchResult>>;
+
+    // Memory document support
+    fn upsert_memory_doc(&self, input: &MemoryDocInput) -> Result<MemoryDoc>;
+    fn get_memory_doc_by_source(&self, source: &str) -> Result<Option<MemoryDoc>>;
+    fn get_memory_docs_without_embeddings(&self, limit: usize) -> Result<Vec<MemoryDoc>>;
+    fn store_memory_embedding(&self, doc_id: i64, embedding: &[f32]) -> Result<()>;
+    fn search_memory(
+        &self,
+        embedding: &[f32],
+        opts: &MemorySearchOpts,
+    ) -> Result<Vec<MemoryMatch>>;
 }
 
 pub trait Ingester: Send + Sync {

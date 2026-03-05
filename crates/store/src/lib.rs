@@ -77,7 +77,8 @@ impl SqliteStore {
 mod tests {
     use super::*;
     use commitmux_types::{
-        Commit, CommitFile, CommitPatch, FileStatus, RepoInput, RepoUpdate, SearchOpts, Store,
+        Commit, CommitFile, CommitPatch, FileStatus, MemoryDocInput, MemorySourceType, RepoInput,
+        RepoUpdate, SearchOpts, Store,
     };
     use std::path::PathBuf;
 
@@ -614,5 +615,126 @@ mod tests {
         assert_eq!(result.patch_text, original_text);
         assert_eq!(result.repo, "patchrepo");
         assert_eq!(result.sha, "1234abcd");
+    }
+
+    // ── Memory document tests ─────────────────────────────────────────────
+
+    fn make_memory_input(source: &str, project: &str, content: &str) -> MemoryDocInput {
+        MemoryDocInput {
+            source: source.to_string(),
+            project: project.to_string(),
+            source_type: MemorySourceType::MemoryFile,
+            content: content.to_string(),
+            file_mtime: 1700000000,
+        }
+    }
+
+    #[test]
+    fn test_upsert_memory_doc_roundtrip() {
+        let store = make_store();
+        let input = make_memory_input(
+            "/home/user/.claude/projects/myproj/memory/MEMORY.md",
+            "myproj",
+            "# Memory\n\nSome notes here.",
+        );
+        let doc = store.upsert_memory_doc(&input).expect("upsert_memory_doc");
+        assert!(doc.doc_id > 0, "expected positive doc_id");
+        assert_eq!(doc.source, input.source);
+        assert_eq!(doc.project, "myproj");
+        assert_eq!(doc.source_type, MemorySourceType::MemoryFile);
+        assert_eq!(doc.content, "# Memory\n\nSome notes here.");
+        assert_eq!(doc.file_mtime, 1700000000);
+        assert!(doc.created_at > 0, "expected created_at to be set");
+
+        // Query back by source
+        let fetched = store
+            .get_memory_doc_by_source(&input.source)
+            .expect("get_memory_doc_by_source")
+            .expect("should exist");
+        assert_eq!(fetched.doc_id, doc.doc_id);
+        assert_eq!(fetched.project, "myproj");
+        assert_eq!(fetched.content, "# Memory\n\nSome notes here.");
+    }
+
+    #[test]
+    fn test_memory_doc_incremental() {
+        let store = make_store();
+        let input = make_memory_input(
+            "/home/user/.claude/projects/proj/memory/M.md",
+            "proj",
+            "original content",
+        );
+        let doc1 = store.upsert_memory_doc(&input).expect("first upsert");
+
+        // Upsert with new mtime and content
+        let updated_input = MemoryDocInput {
+            source: input.source.clone(),
+            project: "proj".to_string(),
+            source_type: MemorySourceType::MemoryFile,
+            content: "updated content".to_string(),
+            file_mtime: 1700001000,
+        };
+        let doc2 = store
+            .upsert_memory_doc(&updated_input)
+            .expect("second upsert");
+
+        assert!(doc2.doc_id > 0, "expected positive doc_id");
+        assert_eq!(doc2.file_mtime, 1700001000);
+        assert_eq!(doc2.content, "updated content");
+
+        // Verify via get
+        let fetched = store
+            .get_memory_doc_by_source(&input.source)
+            .expect("get")
+            .expect("should exist");
+        assert_eq!(fetched.content, "updated content");
+        assert_eq!(fetched.file_mtime, 1700001000);
+    }
+
+    #[test]
+    fn test_get_memory_docs_without_embeddings() {
+        let store = make_store();
+
+        // Insert 2 docs
+        let input1 = make_memory_input("/path/doc1.md", "proj1", "content 1");
+        let input2 = make_memory_input("/path/doc2.md", "proj2", "content 2");
+        let doc1 = store.upsert_memory_doc(&input1).expect("upsert 1");
+        store.upsert_memory_doc(&input2).expect("upsert 2");
+
+        // Both should be returned initially
+        let unembedded = store
+            .get_memory_docs_without_embeddings(10)
+            .expect("get without embeddings");
+        assert_eq!(unembedded.len(), 2, "expected 2 unembedded docs");
+
+        // Embed doc1
+        let embedding = vec![0.0f32; 768];
+        store
+            .store_memory_embedding(doc1.doc_id, &embedding)
+            .expect("store_memory_embedding");
+
+        // Now only 1 should remain
+        let remaining = store
+            .get_memory_docs_without_embeddings(10)
+            .expect("get without embeddings 2");
+        assert_eq!(remaining.len(), 1, "expected 1 unembedded doc");
+        assert_eq!(remaining[0].source, "/path/doc2.md");
+    }
+
+    #[test]
+    fn test_store_memory_embedding_idempotent() {
+        let store = make_store();
+        let input = make_memory_input("/path/idem.md", "proj", "idempotent content");
+        let doc = store.upsert_memory_doc(&input).expect("upsert");
+
+        let embedding = vec![0.0f32; 768];
+        store
+            .store_memory_embedding(doc.doc_id, &embedding)
+            .expect("store_memory_embedding first");
+
+        // Second call must not error
+        store
+            .store_memory_embedding(doc.doc_id, &embedding)
+            .expect("store_memory_embedding second (idempotent)");
     }
 }
