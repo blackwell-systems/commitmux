@@ -600,11 +600,7 @@ mod tests {
         ) -> StoreResult<Vec<commitmux_types::MemoryDoc>> {
             Ok(vec![])
         }
-        fn store_memory_embedding(
-            &self,
-            _doc_id: i64,
-            _embedding: &[f32],
-        ) -> StoreResult<()> {
+        fn store_memory_embedding(&self, _doc_id: i64, _embedding: &[f32]) -> StoreResult<()> {
             Ok(())
         }
         fn search_memory(
@@ -771,11 +767,7 @@ mod tests {
         ) -> StoreResult<Vec<commitmux_types::MemoryDoc>> {
             Ok(vec![])
         }
-        fn store_memory_embedding(
-            &self,
-            _doc_id: i64,
-            _embedding: &[f32],
-        ) -> StoreResult<()> {
+        fn store_memory_embedding(&self, _doc_id: i64, _embedding: &[f32]) -> StoreResult<()> {
             Ok(())
         }
         fn search_memory(

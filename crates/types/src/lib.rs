@@ -414,11 +414,8 @@ pub trait Store: Send + Sync {
     fn get_memory_doc_by_source(&self, source: &str) -> Result<Option<MemoryDoc>>;
     fn get_memory_docs_without_embeddings(&self, limit: usize) -> Result<Vec<MemoryDoc>>;
     fn store_memory_embedding(&self, doc_id: i64, embedding: &[f32]) -> Result<()>;
-    fn search_memory(
-        &self,
-        embedding: &[f32],
-        opts: &MemorySearchOpts,
-    ) -> Result<Vec<MemoryMatch>>;
+    fn search_memory(&self, embedding: &[f32], opts: &MemorySearchOpts)
+        -> Result<Vec<MemoryMatch>>;
 }
 
 pub trait Ingester: Send + Sync {

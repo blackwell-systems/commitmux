@@ -1036,9 +1036,7 @@ impl Store for SqliteStore {
                         doc_id: row.get(0)?,
                         source: row.get(1)?,
                         project: row.get(2)?,
-                        source_type: MemorySourceType::from_str(
-                            &row.get::<_, String>(3)?,
-                        ),
+                        source_type: MemorySourceType::from_str(&row.get::<_, String>(3)?),
                         content: row.get(4)?,
                         file_mtime: row.get(5)?,
                         created_at: row.get(6)?,
@@ -1064,9 +1062,7 @@ impl Store for SqliteStore {
                     doc_id: row.get(0)?,
                     source: row.get(1)?,
                     project: row.get(2)?,
-                    source_type: MemorySourceType::from_str(
-                        &row.get::<_, String>(3)?,
-                    ),
+                    source_type: MemorySourceType::from_str(&row.get::<_, String>(3)?),
                     content: row.get(4)?,
                     file_mtime: row.get(5)?,
                     created_at: row.get(6)?,
@@ -1107,7 +1103,14 @@ impl Store for SqliteStore {
             "INSERT INTO memory_embeddings
                  (embed_id, embedding, doc_id, source, project, source_type)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![embed_id, embedding_bytes, doc_id, source, project, source_type],
+            params![
+                embed_id,
+                embedding_bytes,
+                doc_id,
+                source,
+                project,
+                source_type
+            ],
         )?;
         Ok(())
     }
@@ -1141,7 +1144,12 @@ impl Store for SqliteStore {
         let mut stmt = conn.prepare(sql)?;
         let results: rusqlite::Result<Vec<MemoryMatch>> = stmt
             .query_map(
-                params![embedding_bytes, limit as i64, project_filter, source_type_filter],
+                params![
+                    embedding_bytes,
+                    limit as i64,
+                    project_filter,
+                    source_type_filter
+                ],
                 |row| {
                     Ok(MemoryMatch {
                         doc_id: row.get(0)?,

@@ -960,9 +960,8 @@ fn main() -> Result<()> {
                         .enable_all()
                         .build()
                         .expect("tokio runtime");
-                    match rt.block_on(commitmux_embed::embed_memory_pending(
-                        &store, &embedder, 50,
-                    )) {
+                    match rt.block_on(commitmux_embed::embed_memory_pending(&store, &embedder, 50))
+                    {
                         Ok(summary) => {
                             if summary.embedded > 0 || summary.failed > 0 {
                                 println!(
@@ -1210,10 +1209,7 @@ mod tests {
             "--claude-home",
             "/tmp/.claude",
         ]);
-        assert!(
-            cli.is_ok(),
-            "ingest-memory should parse with --claude-home"
-        );
+        assert!(cli.is_ok(), "ingest-memory should parse with --claude-home");
         if let Ok(parsed) = cli {
             match parsed.command {
                 Commands::IngestMemory { claude_home, db: _ } => {
@@ -1228,12 +1224,7 @@ mod tests {
         }
 
         // Parse with --db
-        let cli = Cli::try_parse_from([
-            "commitmux",
-            "ingest-memory",
-            "--db",
-            "/tmp/test.db",
-        ]);
+        let cli = Cli::try_parse_from(["commitmux", "ingest-memory", "--db", "/tmp/test.db"]);
         assert!(cli.is_ok(), "ingest-memory should parse with --db");
 
         // Parse with both flags
