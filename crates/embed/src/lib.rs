@@ -102,6 +102,22 @@ pub fn build_embed_doc(commit: &EmbedCommit) -> String {
     doc
 }
 
+// ── build_memory_embed_doc ─────────────────────────────────────────────────
+
+/// Builds the embedding document for a memory file.
+/// Format: "# {project}\n\n{content truncated to 3000 chars}"
+/// Pure function — no I/O.
+pub fn build_memory_embed_doc(project: &str, content: &str) -> String {
+    let mut doc = format!("# {}\n\n", project);
+    // Truncate content to ~3000 chars to stay within embedding model context
+    if content.len() > 3000 {
+        doc.push_str(&content[..3000]);
+    } else {
+        doc.push_str(content);
+    }
+    doc
+}
+
 // ── Connection error detection ─────────────────────────────────────────────
 
 /// Returns true if the error is a connection-level failure (e.g. Ollama not running).
@@ -167,6 +183,64 @@ pub async fn embed_pending(
                         ));
                     }
                     eprintln!("embed: failed to embed {}: {e}", commit.sha);
+                    summary.failed += 1;
+                }
+            }
+        }
+    }
+
+    Ok(summary)
+}
+
+// ── embed_memory_pending ───────────────────────────────────────────────────
+
+/// Embeds all memory docs without embeddings.
+/// Fetches in batches of `batch_size`. On connection errors: returns Err immediately with an
+/// actionable message. On other per-doc failures: increments `failed`, continues.
+/// Returns Err if the store query itself fails, or on a connection-level embedding failure.
+pub async fn embed_memory_pending(
+    store: &dyn Store,
+    embedder: &Embedder,
+    batch_size: usize,
+) -> anyhow::Result<EmbedSummary> {
+    let mut summary = EmbedSummary {
+        embedded: 0,
+        skipped: 0,
+        failed: 0,
+    };
+
+    loop {
+        let batch = store
+            .get_memory_docs_without_embeddings(batch_size)
+            .map_err(|e| anyhow::anyhow!("Failed to fetch pending memory docs: {e}"))?;
+
+        if batch.is_empty() {
+            break;
+        }
+
+        for doc in &batch {
+            let doc_text = build_memory_embed_doc(&doc.project, &doc.content);
+            match embedder.embed(&doc_text).await {
+                Ok(embedding) => {
+                    match store.store_memory_embedding(doc.doc_id, &embedding) {
+                        Ok(()) => summary.embedded += 1,
+                        Err(e) => {
+                            eprintln!(
+                                "embed: failed to store memory embedding for doc {}: {e}",
+                                doc.doc_id
+                            );
+                            summary.failed += 1;
+                        }
+                    }
+                }
+                Err(e) => {
+                    if is_connection_error(&e) {
+                        return Err(anyhow::anyhow!(
+                            "Cannot connect to Ollama at {} — is Ollama running? Try: ollama serve",
+                            embedder.endpoint
+                        ));
+                    }
+                    eprintln!("embed: failed to embed memory doc {}: {e}", doc.doc_id);
                     summary.failed += 1;
                 }
             }
@@ -432,5 +506,51 @@ mod tests {
         let embedder = Embedder::new(&config);
         assert_eq!(embedder.endpoint, "http://test:11434/v1");
         assert_eq!(embedder.model, "test-model");
+    }
+
+    // ── build_memory_embed_doc tests ───────────────────────────────────────
+
+    #[test]
+    fn test_build_memory_embed_doc_basic() {
+        let doc = build_memory_embed_doc("my-project", "Some memory content here.");
+        assert!(
+            doc.starts_with("# my-project\n\n"),
+            "should start with '# project\\n\\n', got: {:?}",
+            &doc[..30.min(doc.len())]
+        );
+        assert!(
+            doc.contains("Some memory content here."),
+            "should contain the content"
+        );
+    }
+
+    #[test]
+    fn test_build_memory_embed_doc_truncates() {
+        let long_content: String = "x".repeat(5000);
+        let doc = build_memory_embed_doc("proj", &long_content);
+
+        let prefix = "# proj\n\n";
+        assert!(doc.starts_with(prefix));
+        let content_portion = &doc[prefix.len()..];
+        assert_eq!(
+            content_portion.len(),
+            3000,
+            "content portion should be truncated to 3000 chars, got {}",
+            content_portion.len()
+        );
+    }
+
+    #[test]
+    fn test_build_memory_embed_doc_short() {
+        let short_content = "Brief note.";
+        let doc = build_memory_embed_doc("proj", short_content);
+
+        let prefix = "# proj\n\n";
+        assert!(doc.starts_with(prefix));
+        let content_portion = &doc[prefix.len()..];
+        assert_eq!(
+            content_portion, short_content,
+            "short content should not be truncated"
+        );
     }
 }
