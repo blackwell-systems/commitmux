@@ -1125,17 +1125,18 @@ impl Store for SqliteStore {
         let project_filter = opts.project.as_deref().unwrap_or("");
         let source_type_filter = opts.source_type.as_deref().unwrap_or("");
 
-        let sql = "SELECT me.doc_id, me.source, me.project, me.source_type, d.content, me.distance
+        let sql = "SELECT d.doc_id, d.source, d.project, d.source_type, d.content, sub.distance
              FROM (
-               SELECT doc_id, source, project, source_type, distance
+               SELECT embed_id, distance
                FROM memory_embeddings
                WHERE embedding MATCH ?1
                  AND k = ?2
                ORDER BY distance
-             ) me
-             JOIN memory_docs d ON d.doc_id = me.doc_id
-             WHERE (?3 = '' OR me.project = ?3)
-               AND (?4 = '' OR me.source_type = ?4)";
+             ) sub
+             JOIN memory_embed_map m ON m.embed_id = sub.embed_id
+             JOIN memory_docs d ON d.doc_id = m.doc_id
+             WHERE (?3 = '' OR d.project = ?3)
+               AND (?4 = '' OR d.source_type = ?4)";
 
         let mut stmt = conn.prepare(sql)?;
         let results: rusqlite::Result<Vec<MemoryMatch>> = stmt
