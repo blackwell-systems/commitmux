@@ -377,6 +377,23 @@ mod tests {
         fn count_embeddings_for_repo(&self, _repo_id: i64) -> Result<usize> {
             unimplemented!()
         }
+
+        // Memory document support — stubs for NullStore
+        fn upsert_memory_doc(&self, _input: &commitmux_types::MemoryDocInput) -> Result<commitmux_types::MemoryDoc> {
+            unimplemented!()
+        }
+        fn get_memory_doc_by_source(&self, _source: &str) -> Result<Option<commitmux_types::MemoryDoc>> {
+            unimplemented!()
+        }
+        fn get_memory_docs_without_embeddings(&self, _limit: usize) -> Result<Vec<commitmux_types::MemoryDoc>> {
+            Ok(vec![])
+        }
+        fn store_memory_embedding(&self, _doc_id: i64, _embedding: &[f32]) -> Result<()> {
+            Ok(())
+        }
+        fn search_memory(&self, _embedding: &[f32], _opts: &commitmux_types::MemorySearchOpts) -> Result<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
     }
 
     // Helper to construct a minimal EmbedCommit
