@@ -11,6 +11,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 - **CI workflow** — `.github/workflows/ci.yml` runs on every push and PR to `main`. Three sequential jobs: `Lint & Format` (rustfmt check + clippy `-D warnings`), `Test` (`cargo test --workspace`), `Build` (cross-compile check against linux/darwin × amd64/arm64 via `cargo check`). Uses `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache` for fast incremental builds.
 
+- **Memory search**: `commitmux_search_memory` MCP tool — semantic search over claudewatch memory files (session summaries, tasks, blockers, decisions). Enables AI agents to find prior context and solutions across all projects by meaning, not just keywords. Uses the same embedding infrastructure as commit search.
+- `ingest-memory [--claude-home PATH]`: scans `~/.claude/projects/*/memory/*.md` and indexes memory documents for semantic search. Incremental: tracks file modification time and only re-embeds changed files. Automatically generates embeddings after ingestion.
+- Memory document storage: new `memory_docs`, `memory_embed_map`, and `memory_embeddings` tables in SQLite store. Source types: `session_summary`, `task`, `blocker`, `memory_file`, `decision`.
 - **Semantic search**: `commitmux_search_semantic` MCP tool — natural language search over commit history using vector embeddings. Finds commits by intent, not just keywords. Powered by any OpenAI-compatible embedding endpoint (Ollama by default).
 - `add-repo --embed`: enable semantic embeddings when registering a repo.
 - `update-repo --embed` / `update-repo --no-embed`: enable or disable embeddings on an existing repo.
@@ -50,6 +53,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- Memory search kNN query now routes through `memory_embed_map` table instead of selecting auxiliary columns directly from the vec0 virtual table. sqlite-vec doesn't support selecting auxiliary columns (`+doc_id`, `+source`) in kNN subquery output.
 - MCP test mock for `search` was missing the `score` field added to `SearchResult` for semantic search results. Added `score: None` to the mock struct literal.
 - `embed_pending` now fail-fasts on Ollama connection errors instead of printing one error per commit and exiting 0. A single actionable message is shown with the configured endpoint and instructions to run `ollama serve`.
 - `config set` now validates keys against a known allowlist and rejects empty values, rather than silently accepting invalid configuration.
