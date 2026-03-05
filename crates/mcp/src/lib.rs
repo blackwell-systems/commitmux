@@ -10,9 +10,12 @@ pub mod tools;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 
-use commitmux_types::{SearchOpts, Store, TouchOpts};
+use commitmux_types::{MemorySearchOpts, SearchOpts, Store, TouchOpts};
 use serde_json::{json, Value};
-use tools::{GetCommitInput, GetPatchInput, SearchInput, SemanticSearchInput, TouchesInput};
+use tools::{
+    GetCommitInput, GetPatchInput, SearchInput, SearchMemoryInput, SemanticSearchInput,
+    TouchesInput,
+};
 // ListReposInput is defined in tools.rs for API consistency but has no fields to parse
 #[allow(unused_imports)]
 use tools::ListReposInput;
@@ -193,6 +196,20 @@ impl McpServer {
                             },
                             "required": ["query"]
                         }
+                    },
+                    {
+                        "name": "commitmux_search_memory",
+                        "description": "Semantic search over indexed claudewatch memory files (session summaries, tasks, blockers, decisions). Use for finding prior context, decisions, and known issues across projects.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "query": { "type": "string", "description": "Natural language description of what you're looking for" },
+                                "project": { "type": "string", "description": "Filter by project name (optional)" },
+                                "source_type": { "type": "string", "description": "Filter by source type: session_summary, task, blocker, memory_file, decision (optional)" },
+                                "limit": { "type": "integer", "description": "Max results (default 10)" }
+                            },
+                            "required": ["query"]
+                        }
                     }
                 ]
             }
@@ -210,6 +227,7 @@ impl McpServer {
             "commitmux_get_patch" => self.call_get_patch(&arguments),
             "commitmux_list_repos" => self.call_list_repos(&arguments),
             "commitmux_search_semantic" => self.call_search_semantic(&arguments),
+            "commitmux_search_memory" => self.call_search_memory(&arguments),
             other => Err(format!("Unknown tool: {other}")),
         };
 
@@ -356,6 +374,49 @@ impl McpServer {
             .store
             .search_semantic(&embedding, &opts)
             .map_err(|e| format!("Semantic search failed: {e}"))?;
+
+        serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+    }
+
+    fn call_search_memory(&self, arguments: &Value) -> Result<String, String> {
+        let input: SearchMemoryInput = serde_json::from_value(arguments.clone())
+            .map_err(|e| format!("Invalid arguments: {e}"))?;
+
+        // Validation: Empty query
+        if input.query.trim().is_empty() {
+            return Err("Query cannot be empty".to_string());
+        }
+
+        // Validation: Limit = 0
+        if let Some(limit) = input.limit {
+            if limit == 0 {
+                return Err("Limit must be greater than 0".to_string());
+            }
+        }
+
+        // Build embedder from store config
+        let config = commitmux_embed::EmbedConfig::from_store(self.store.as_ref())
+            .map_err(|e| format!("Embed config error: {e}"))?;
+        let embedder = commitmux_embed::Embedder::new(&config);
+
+        // Embed the query (async → sync via block_on)
+        let embedding = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("Failed to build tokio runtime: {e}"))?
+            .block_on(embedder.embed(&input.query))
+            .map_err(|e| format!("Failed to embed query: {e}"))?;
+
+        // Search
+        let opts = MemorySearchOpts {
+            project: input.project,
+            source_type: input.source_type,
+            limit: input.limit,
+        };
+        let results = self
+            .store
+            .search_memory(&embedding, &opts)
+            .map_err(|e| format!("Memory search failed: {e}"))?;
 
         serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
     }
@@ -521,6 +582,38 @@ mod tests {
         ) -> StoreResult<Vec<SearchResult>> {
             Ok(vec![])
         }
+        fn upsert_memory_doc(
+            &self,
+            _input: &commitmux_types::MemoryDocInput,
+        ) -> StoreResult<commitmux_types::MemoryDoc> {
+            unimplemented!()
+        }
+        fn get_memory_doc_by_source(
+            &self,
+            _source: &str,
+        ) -> StoreResult<Option<commitmux_types::MemoryDoc>> {
+            unimplemented!()
+        }
+        fn get_memory_docs_without_embeddings(
+            &self,
+            _limit: usize,
+        ) -> StoreResult<Vec<commitmux_types::MemoryDoc>> {
+            Ok(vec![])
+        }
+        fn store_memory_embedding(
+            &self,
+            _doc_id: i64,
+            _embedding: &[f32],
+        ) -> StoreResult<()> {
+            Ok(())
+        }
+        fn search_memory(
+            &self,
+            _embedding: &[f32],
+            _opts: &commitmux_types::MemorySearchOpts,
+        ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
     }
 
     fn make_server() -> McpServer {
@@ -660,6 +753,38 @@ mod tests {
         ) -> StoreResult<Vec<SearchResult>> {
             Ok(vec![])
         }
+        fn upsert_memory_doc(
+            &self,
+            _input: &commitmux_types::MemoryDocInput,
+        ) -> StoreResult<commitmux_types::MemoryDoc> {
+            unimplemented!()
+        }
+        fn get_memory_doc_by_source(
+            &self,
+            _source: &str,
+        ) -> StoreResult<Option<commitmux_types::MemoryDoc>> {
+            unimplemented!()
+        }
+        fn get_memory_docs_without_embeddings(
+            &self,
+            _limit: usize,
+        ) -> StoreResult<Vec<commitmux_types::MemoryDoc>> {
+            Ok(vec![])
+        }
+        fn store_memory_embedding(
+            &self,
+            _doc_id: i64,
+            _embedding: &[f32],
+        ) -> StoreResult<()> {
+            Ok(())
+        }
+        fn search_memory(
+            &self,
+            _embedding: &[f32],
+            _opts: &commitmux_types::MemorySearchOpts,
+        ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
     }
 
     #[test]
@@ -694,7 +819,7 @@ mod tests {
             tool_names.contains(&"commitmux_get_patch"),
             "missing commitmux_get_patch"
         );
-        assert_eq!(tool_names.len(), 6, "must have exactly 6 tools");
+        assert_eq!(tool_names.len(), 7, "must have exactly 7 tools");
     }
 
     #[test]
@@ -978,5 +1103,85 @@ mod tests {
             .as_str()
             .expect("text field");
         assert!(text.contains("Unknown repo(s)"));
+    }
+
+    #[test]
+    fn test_tools_list_includes_search_memory() {
+        let server = make_server();
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}"#;
+        let response_str = server
+            .handle_message(request)
+            .expect("tools/list must produce a response");
+        let response: Value =
+            serde_json::from_str(&response_str).expect("response must be valid JSON");
+
+        let tools = response["result"]["tools"]
+            .as_array()
+            .expect("result.tools must be an array");
+
+        let tool_names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
+
+        assert!(
+            tool_names.contains(&"commitmux_search_memory"),
+            "missing commitmux_search_memory"
+        );
+    }
+
+    #[test]
+    fn test_search_memory_rejects_empty_query() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_memory",
+                "arguments": { "query": "" }
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(
+            response["result"]["isError"], true,
+            "empty query should return an error response"
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        assert!(text.contains("Query cannot be empty"));
+    }
+
+    #[test]
+    fn test_search_memory_rejects_limit_zero() {
+        let server = make_server();
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "commitmux_search_memory",
+                "arguments": { "query": "test", "limit": 0 }
+            }
+        })
+        .to_string();
+
+        let response_str = server
+            .handle_message(&request)
+            .expect("tools/call must produce a response");
+        let response: Value = serde_json::from_str(&response_str).expect("valid JSON");
+
+        assert_eq!(
+            response["result"]["isError"], true,
+            "limit=0 should return an error response"
+        );
+        let text = response["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text field");
+        assert!(text.contains("Limit must be greater than 0"));
     }
 }

@@ -47,6 +47,15 @@ pub struct SemanticSearchInput {
     pub limit: Option<usize>,
 }
 
+/// Input type for the `commitmux_search_memory` tool.
+#[derive(Debug, Deserialize)]
+pub struct SearchMemoryInput {
+    pub query: String,
+    pub project: Option<String>,
+    pub source_type: Option<String>,
+    pub limit: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
