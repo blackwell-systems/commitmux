@@ -3,8 +3,9 @@ use std::sync::MutexGuard;
 
 use commitmux_types::{
     Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, CommitmuxError, EmbedCommit,
-    IngestState, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result,
-    SearchOpts, SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
+    IngestState, MemoryDoc, MemoryDocInput, MemoryMatch, MemorySearchOpts, MemorySourceType,
+    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
+    SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -985,6 +986,174 @@ impl Store for SqliteStore {
         }
 
         Ok(results)
+    }
+
+    // ── Memory document support ───────────────────────────────────────────
+
+    fn upsert_memory_doc(&self, input: &MemoryDocInput) -> Result<MemoryDoc> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        conn.execute(
+            "INSERT OR REPLACE INTO memory_docs (source, project, source_type, content, file_mtime, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                input.source,
+                input.project,
+                input.source_type.as_str(),
+                input.content,
+                input.file_mtime,
+                now,
+            ],
+        )?;
+        let doc_id: i64 = conn.query_row(
+            "SELECT doc_id FROM memory_docs WHERE source = ?1",
+            params![input.source],
+            |row| row.get(0),
+        )?;
+        Ok(MemoryDoc {
+            doc_id,
+            source: input.source.clone(),
+            project: input.project.clone(),
+            source_type: input.source_type.clone(),
+            content: input.content.clone(),
+            file_mtime: input.file_mtime,
+            created_at: now,
+        })
+    }
+
+    fn get_memory_doc_by_source(&self, source: &str) -> Result<Option<MemoryDoc>> {
+        let conn = self.conn.lock().unwrap();
+        let result = conn
+            .query_row(
+                "SELECT doc_id, source, project, source_type, content, file_mtime, created_at
+                 FROM memory_docs WHERE source = ?1",
+                params![source],
+                |row| {
+                    Ok(MemoryDoc {
+                        doc_id: row.get(0)?,
+                        source: row.get(1)?,
+                        project: row.get(2)?,
+                        source_type: MemorySourceType::from_str(
+                            &row.get::<_, String>(3)?,
+                        ),
+                        content: row.get(4)?,
+                        file_mtime: row.get(5)?,
+                        created_at: row.get(6)?,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(result)
+    }
+
+    fn get_memory_docs_without_embeddings(&self, limit: usize) -> Result<Vec<MemoryDoc>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT d.doc_id, d.source, d.project, d.source_type, d.content, d.file_mtime, d.created_at
+             FROM memory_docs d
+             LEFT JOIN memory_embed_map m ON m.doc_id = d.doc_id
+             WHERE m.doc_id IS NULL
+             LIMIT ?1",
+        )?;
+        let result: rusqlite::Result<Vec<MemoryDoc>> = stmt
+            .query_map(params![limit as i64], |row| {
+                Ok(MemoryDoc {
+                    doc_id: row.get(0)?,
+                    source: row.get(1)?,
+                    project: row.get(2)?,
+                    source_type: MemorySourceType::from_str(
+                        &row.get::<_, String>(3)?,
+                    ),
+                    content: row.get(4)?,
+                    file_mtime: row.get(5)?,
+                    created_at: row.get(6)?,
+                })
+            })?
+            .collect();
+        Ok(result?)
+    }
+
+    fn store_memory_embedding(&self, doc_id: i64, embedding: &[f32]) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // Insert into key map (idempotent)
+        conn.execute(
+            "INSERT OR IGNORE INTO memory_embed_map (doc_id) VALUES (?1)",
+            params![doc_id],
+        )?;
+        let embed_id: i64 = conn.query_row(
+            "SELECT embed_id FROM memory_embed_map WHERE doc_id = ?1",
+            params![doc_id],
+            |row| row.get(0),
+        )?;
+
+        // Get auxiliary columns from memory_docs
+        let (source, project, source_type): (String, String, String) = conn.query_row(
+            "SELECT source, project, source_type FROM memory_docs WHERE doc_id = ?1",
+            params![doc_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+
+        // Convert Vec<f32> to bytes for sqlite-vec
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+        // sqlite-vec vec0 tables don't support INSERT OR REPLACE; delete first for idempotency.
+        conn.execute(
+            "DELETE FROM memory_embeddings WHERE embed_id = ?1",
+            params![embed_id],
+        )?;
+        conn.execute(
+            "INSERT INTO memory_embeddings
+                 (embed_id, embedding, doc_id, source, project, source_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![embed_id, embedding_bytes, doc_id, source, project, source_type],
+        )?;
+        Ok(())
+    }
+
+    fn search_memory(
+        &self,
+        embedding: &[f32],
+        opts: &MemorySearchOpts,
+    ) -> Result<Vec<MemoryMatch>> {
+        let conn = self.conn.lock().unwrap();
+        let limit = opts.limit.unwrap_or(10);
+
+        let embedding_bytes: Vec<u8> = embedding.iter().flat_map(|f| f.to_le_bytes()).collect();
+
+        let project_filter = opts.project.as_deref().unwrap_or("");
+        let source_type_filter = opts.source_type.as_deref().unwrap_or("");
+
+        let sql = "SELECT me.doc_id, me.source, me.project, me.source_type, d.content, me.distance
+             FROM (
+               SELECT doc_id, source, project, source_type, distance
+               FROM memory_embeddings
+               WHERE embedding MATCH ?1
+                 AND k = ?2
+               ORDER BY distance
+             ) me
+             JOIN memory_docs d ON d.doc_id = me.doc_id
+             WHERE (?3 = '' OR me.project = ?3)
+               AND (?4 = '' OR me.source_type = ?4)";
+
+        let mut stmt = conn.prepare(sql)?;
+        let results: rusqlite::Result<Vec<MemoryMatch>> = stmt
+            .query_map(
+                params![embedding_bytes, limit as i64, project_filter, source_type_filter],
+                |row| {
+                    Ok(MemoryMatch {
+                        doc_id: row.get(0)?,
+                        source: row.get(1)?,
+                        project: row.get(2)?,
+                        source_type: row.get(3)?,
+                        content: row.get(4)?,
+                        score: row.get::<_, f64>(5)? as f32,
+                    })
+                },
+            )?
+            .collect();
+        Ok(results?)
     }
 }
 

@@ -85,6 +85,32 @@ CREATE VIRTUAL TABLE IF NOT EXISTS commit_embeddings USING vec0(
     +patch_preview TEXT
 );
 
+CREATE TABLE IF NOT EXISTS memory_docs (
+    doc_id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    source       TEXT NOT NULL UNIQUE,
+    project      TEXT NOT NULL,
+    source_type  TEXT NOT NULL DEFAULT 'memory_file',
+    content      TEXT NOT NULL,
+    file_mtime   INTEGER NOT NULL DEFAULT 0,
+    created_at   INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_docs_project ON memory_docs(project);
+
+CREATE TABLE IF NOT EXISTS memory_embed_map (
+    embed_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    doc_id   INTEGER NOT NULL UNIQUE
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_embeddings USING vec0(
+    embed_id     INTEGER PRIMARY KEY,
+    embedding    FLOAT[768],
+    +doc_id      INTEGER,
+    +source      TEXT,
+    +project     TEXT,
+    +source_type TEXT
+);
+
 "#;
 
 /// Migration statements for new `repos` columns.
