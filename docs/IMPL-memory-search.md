@@ -403,6 +403,30 @@ rollback: |
   crates/store/src/queries.rs, and crates/store/src/lib.rs (test additions).
 ```
 
+### Agent A - Completion Report
+
+**Status: COMPLETE**
+**Commit:** `ee23273` on branch `worktree-agent-a63a6142`
+
+**What was implemented:**
+
+1. **crates/types/src/lib.rs** -- Added `MemorySourceType` enum (with `as_str()` and `from_str()`), `MemoryDoc`, `MemoryDocInput`, `MemoryMatch`, `MemorySearchOpts` types. Extended `Store` trait with 5 new methods: `upsert_memory_doc`, `get_memory_doc_by_source`, `get_memory_docs_without_embeddings`, `store_memory_embedding`, `search_memory`.
+
+2. **crates/store/src/schema.rs** -- Appended `memory_docs` table, `idx_memory_docs_project` index, `memory_embed_map` table, and `memory_embeddings` vec0 virtual table to `SCHEMA_SQL`.
+
+3. **crates/store/src/queries.rs** -- Implemented all 5 Store trait methods on `SqliteStore`, following the existing `store_embedding`/`search_semantic` patterns (embed_map + vec0 delete-then-insert for idempotency, kNN with post-filter).
+
+4. **crates/store/src/lib.rs** -- Added 4 tests: `test_upsert_memory_doc_roundtrip`, `test_memory_doc_incremental`, `test_get_memory_docs_without_embeddings`, `test_store_memory_embedding_idempotent`.
+
+**Verification:**
+- `cargo test -p commitmux-types` -- 5 passed
+- `cargo test -p commitmux-store` -- 33 passed
+- `cargo clippy -p commitmux-types -p commitmux-store -- -D warnings` -- 0 warnings
+
+**Notes:**
+- Added `#[allow(clippy::should_implement_trait)]` on `MemorySourceType::from_str()` since the method intentionally does not implement `std::str::FromStr` (it is infallible, defaulting to `MemoryFile`).
+- `INSERT OR REPLACE` on `memory_docs` (keyed by UNIQUE `source`) causes AUTOINCREMENT `doc_id` to change on upsert. This is fine -- the embed pipeline re-queries doc_id after upsert.
+
 ### Wave 1, Agent B: Embed Crate Extensions
 
 ```
@@ -766,6 +790,33 @@ fn search_memory(&self, _embedding: &[f32], _opts: &commitmux_types::MemorySearc
 - `Store::get_memory_docs_without_embeddings` — added by Wave 1A
 - `Store::store_memory_embedding` — added by Wave 1A
 - NullStore missing 5 new trait methods — cascade handled by Wave 2A / Orchestrator merge fixup
+
+### Agent B (Wave 2) - Completion Report
+
+**Status**: COMPLETE
+**Commit**: `da348cc` (`feat(mcp): add commitmux_search_memory MCP tool`)
+**Branch**: `main`
+**Files modified**: `crates/mcp/src/lib.rs`, `crates/mcp/src/tools.rs`
+
+**What was implemented**:
+
+1. **crates/mcp/src/tools.rs** -- Added `SearchMemoryInput` struct with `query` (required), `project`, `source_type`, and `limit` fields.
+
+2. **crates/mcp/src/lib.rs** -- Updated imports to include `SearchMemoryInput` and `MemorySearchOpts`.
+
+3. **crates/mcp/src/lib.rs** -- Added `commitmux_search_memory` tool entry to `handle_tools_list` with full JSON Schema (query required, project/source_type/limit optional).
+
+4. **crates/mcp/src/lib.rs** -- Added dispatch in `handle_tools_call` routing to `call_search_memory`.
+
+5. **crates/mcp/src/lib.rs** -- Added `call_search_memory` method following `call_search_semantic` pattern: validates empty query and limit=0, builds EmbedConfig/Embedder from store, embeds query via one-shot tokio runtime, builds `MemorySearchOpts`, calls `store.search_memory`, serializes results.
+
+6. **crates/mcp/src/lib.rs** -- Added 5 new Store trait method stubs to both `StubStore` and `StubStoreWithRepos` (`upsert_memory_doc`, `get_memory_doc_by_source`, `get_memory_docs_without_embeddings`, `store_memory_embedding`, `search_memory`).
+
+7. **Tests** -- Added 3 new tests: `test_tools_list_includes_search_memory`, `test_search_memory_rejects_empty_query`, `test_search_memory_rejects_limit_zero`. Updated `test_tools_list_response` expected count from 6 to 7.
+
+**Verification**:
+- `cargo test -p commitmux-mcp` -- 18 passed (including 2 existing tool input deserialization tests)
+- `cargo clippy -p commitmux-mcp -- -D warnings` -- 0 warnings
 
 ### Post-Wave-2 Verification
 
