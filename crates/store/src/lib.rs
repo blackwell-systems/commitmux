@@ -664,7 +664,7 @@ mod tests {
             "proj",
             "original content",
         );
-        let doc1 = store.upsert_memory_doc(&input).expect("first upsert");
+        let _doc1 = store.upsert_memory_doc(&input).expect("first upsert");
 
         // Upsert with new mtime and content
         let updated_input = MemoryDocInput {
