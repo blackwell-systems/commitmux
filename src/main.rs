@@ -174,6 +174,19 @@ enum Commands {
         )]
         db: Option<PathBuf>,
     },
+    #[command(about = "Ingest claudewatch memory files for semantic search")]
+    IngestMemory {
+        #[arg(
+            long = "claude-home",
+            help = "Path to .claude directory (default: ~/.claude)"
+        )]
+        claude_home: Option<PathBuf>,
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
+        db: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -857,6 +870,113 @@ fn main() -> Result<()> {
                 }
             }
         }
+
+        Commands::IngestMemory { claude_home, db } => {
+            let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
+            }
+            let store = SqliteStore::open(&db_path)
+                .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+            let claude_dir = claude_home.unwrap_or_else(|| PathBuf::from(&home).join(".claude"));
+
+            if !claude_dir.exists() {
+                anyhow::bail!("Claude directory not found at {}", claude_dir.display());
+            }
+
+            // Scan projects/*/memory/*.md
+            let projects_dir = claude_dir.join("projects");
+            if !projects_dir.exists() {
+                println!("No projects directory found at {}", projects_dir.display());
+                return Ok(());
+            }
+
+            let mut total_ingested = 0usize;
+            let mut total_skipped = 0usize;
+
+            for project_entry in std::fs::read_dir(&projects_dir)? {
+                let project_entry = project_entry?;
+                let memory_dir = project_entry.path().join("memory");
+                if !memory_dir.is_dir() {
+                    continue;
+                }
+
+                // Extract project name from directory name
+                let project_name = project_entry.file_name().to_string_lossy().to_string();
+
+                for file_entry in std::fs::read_dir(&memory_dir)? {
+                    let file_entry = file_entry?;
+                    let path = file_entry.path();
+                    if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                        continue;
+                    }
+
+                    let metadata = std::fs::metadata(&path)?;
+                    let file_mtime = metadata
+                        .modified()
+                        .unwrap_or(std::time::UNIX_EPOCH)
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64;
+
+                    let source = path.to_string_lossy().to_string();
+
+                    // Check if already indexed with same mtime
+                    if let Ok(Some(existing)) = store.get_memory_doc_by_source(&source) {
+                        if existing.file_mtime >= file_mtime {
+                            total_skipped += 1;
+                            continue;
+                        }
+                    }
+
+                    let content = std::fs::read_to_string(&path)?;
+                    let input = commitmux_types::MemoryDocInput {
+                        source,
+                        project: project_name.clone(),
+                        source_type: commitmux_types::MemorySourceType::MemoryFile,
+                        content,
+                        file_mtime,
+                    };
+                    store.upsert_memory_doc(&input)?;
+                    total_ingested += 1;
+                }
+            }
+
+            println!(
+                "Ingested {} memory files ({} unchanged, skipped)",
+                total_ingested, total_skipped
+            );
+
+            // Embed any docs without embeddings
+            match EmbedConfig::from_store(&store) {
+                Ok(config) => {
+                    let embedder = commitmux_embed::Embedder::new(&config);
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("tokio runtime");
+                    match rt.block_on(commitmux_embed::embed_memory_pending(
+                        &store, &embedder, 50,
+                    )) {
+                        Ok(summary) => {
+                            if summary.embedded > 0 || summary.failed > 0 {
+                                println!(
+                                    "Embedded {} memory docs ({} failed)",
+                                    summary.embedded, summary.failed
+                                );
+                            }
+                        }
+                        Err(e) => eprintln!("Warning: embedding failed: {e}"),
+                    }
+                }
+                Err(e) => eprintln!("Warning: embed config error: {e}"),
+            }
+        }
     }
 
     Ok(())
@@ -1072,6 +1192,62 @@ mod tests {
         assert!(
             !would_embed,
             "should not attempt embedding when embed_enabled is false, even with --embed-only"
+        );
+    }
+
+    #[test]
+    fn test_ingest_memory_command_parses() {
+        use clap::Parser;
+
+        // Parse without --claude-home
+        let cli = Cli::try_parse_from(["commitmux", "ingest-memory"]);
+        assert!(cli.is_ok(), "ingest-memory should parse without args");
+
+        // Parse with --claude-home
+        let cli = Cli::try_parse_from([
+            "commitmux",
+            "ingest-memory",
+            "--claude-home",
+            "/tmp/.claude",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "ingest-memory should parse with --claude-home"
+        );
+        if let Ok(parsed) = cli {
+            match parsed.command {
+                Commands::IngestMemory { claude_home, db: _ } => {
+                    assert_eq!(
+                        claude_home,
+                        Some(PathBuf::from("/tmp/.claude")),
+                        "--claude-home should be parsed"
+                    );
+                }
+                _ => panic!("expected IngestMemory command"),
+            }
+        }
+
+        // Parse with --db
+        let cli = Cli::try_parse_from([
+            "commitmux",
+            "ingest-memory",
+            "--db",
+            "/tmp/test.db",
+        ]);
+        assert!(cli.is_ok(), "ingest-memory should parse with --db");
+
+        // Parse with both flags
+        let cli = Cli::try_parse_from([
+            "commitmux",
+            "ingest-memory",
+            "--claude-home",
+            "/tmp/.claude",
+            "--db",
+            "/tmp/test.db",
+        ]);
+        assert!(
+            cli.is_ok(),
+            "ingest-memory should parse with both --claude-home and --db"
         );
     }
 }
