@@ -56,6 +56,14 @@ pub struct SearchMemoryInput {
     pub limit: Option<usize>,
 }
 
+/// Input type for the `commitmux_search_saw` tool.
+#[derive(Debug, Deserialize)]
+pub struct SearchSawInput {
+    pub feature: String,
+    pub wave: Option<u32>,
+    pub limit: Option<usize>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
