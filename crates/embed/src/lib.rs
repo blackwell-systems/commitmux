@@ -405,6 +405,13 @@ mod tests {
         ) -> Result<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
         }
+        fn search_memory_fts(
+            &self,
+            _query: &str,
+            _opts: &commitmux_types::MemoryFtsSearchOpts,
+        ) -> Result<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
     }
 
     // Helper to construct a minimal EmbedCommit

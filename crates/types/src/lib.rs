@@ -190,6 +190,7 @@ pub enum MemorySourceType {
     Blocker,
     MemoryFile,
     Decision,
+    ImplDoc,
 }
 
 impl MemorySourceType {
@@ -200,6 +201,7 @@ impl MemorySourceType {
             Self::Blocker => "blocker",
             Self::MemoryFile => "memory_file",
             Self::Decision => "decision",
+            Self::ImplDoc => "impl_doc",
         }
     }
 
@@ -210,6 +212,7 @@ impl MemorySourceType {
             "task" => Self::Task,
             "blocker" => Self::Blocker,
             "decision" => Self::Decision,
+            "impl_doc" => Self::ImplDoc,
             _ => Self::MemoryFile,
         }
     }
@@ -254,6 +257,14 @@ pub struct MemorySearchOpts {
     pub project: Option<String>,
     pub source_type: Option<String>,
     pub limit: Option<usize>, // default 10
+}
+
+/// Options for full-text search of memory documents.
+#[derive(Debug, Clone, Default)]
+pub struct MemoryFtsSearchOpts {
+    pub project: Option<String>,
+    pub source_type: Option<String>,
+    pub limit: Option<usize>,
 }
 
 // ── MCP response types ────────────────────────────────────────────────────
@@ -416,6 +427,11 @@ pub trait Store: Send + Sync {
     fn store_memory_embedding(&self, doc_id: i64, embedding: &[f32]) -> Result<()>;
     fn search_memory(&self, embedding: &[f32], opts: &MemorySearchOpts)
         -> Result<Vec<MemoryMatch>>;
+    fn search_memory_fts(
+        &self,
+        query: &str,
+        opts: &MemoryFtsSearchOpts,
+    ) -> Result<Vec<MemoryMatch>>;
 }
 
 pub trait Ingester: Send + Sync {

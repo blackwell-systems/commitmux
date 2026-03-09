@@ -610,6 +610,13 @@ mod tests {
         ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
         }
+        fn search_memory_fts(
+            &self,
+            _query: &str,
+            _opts: &commitmux_types::MemoryFtsSearchOpts,
+        ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
     }
 
     fn make_server() -> McpServer {
@@ -774,6 +781,13 @@ mod tests {
             &self,
             _embedding: &[f32],
             _opts: &commitmux_types::MemorySearchOpts,
+        ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
+            Ok(vec![])
+        }
+        fn search_memory_fts(
+            &self,
+            _query: &str,
+            _opts: &commitmux_types::MemoryFtsSearchOpts,
         ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
         }
