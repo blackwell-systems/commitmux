@@ -13,8 +13,8 @@ use std::sync::Arc;
 use commitmux_types::{MemorySearchOpts, SearchOpts, Store, TouchOpts};
 use serde_json::{json, Value};
 use tools::{
-    GetCommitInput, GetPatchInput, SearchInput, SearchMemoryInput, SemanticSearchInput,
-    TouchesInput,
+    GetCommitInput, GetPatchInput, SearchInput, SearchMemoryInput, SearchSawInput,
+    SemanticSearchInput, TouchesInput,
 };
 // ListReposInput is defined in tools.rs for API consistency but has no fields to parse
 #[allow(unused_imports)]
@@ -210,6 +210,19 @@ impl McpServer {
                             },
                             "required": ["query"]
                         }
+                    },
+                    {
+                        "name": "commitmux_search_saw",
+                        "description": "Search SAW (Scout-and-Wave) protocol history. Finds commits from wave-based development by feature name and optional wave number.",
+                        "inputSchema": {
+                            "type": "object",
+                            "properties": {
+                                "feature": { "type": "string", "description": "Feature slug or description to search for (e.g. 'memory-search')" },
+                                "wave": { "type": "integer", "description": "Optional wave number filter (e.g. 1 for Wave 1 commits only)" },
+                                "limit": { "type": "integer", "description": "Max results (default 20)" }
+                            },
+                            "required": ["feature"]
+                        }
                     }
                 ]
             }
@@ -228,6 +241,7 @@ impl McpServer {
             "commitmux_list_repos" => self.call_list_repos(&arguments),
             "commitmux_search_semantic" => self.call_search_semantic(&arguments),
             "commitmux_search_memory" => self.call_search_memory(&arguments),
+            "commitmux_search_saw" => self.call_search_saw(&arguments),
             other => Err(format!("Unknown tool: {other}")),
         };
 
@@ -419,6 +433,31 @@ impl McpServer {
             .map_err(|e| format!("Memory search failed: {e}"))?;
 
         serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+    }
+
+    fn call_search_saw(&self, arguments: &Value) -> Result<String, String> {
+        let input: SearchSawInput = serde_json::from_value(arguments.clone())
+            .map_err(|e| format!("Invalid arguments for commitmux_search_saw: {e}"))?;
+
+        // Build FTS5 query for SAW merge commits
+        // SAW merge commits have subjects like: "Merge wave1-agent-A: description"
+        let fts_query = if let Some(wave) = input.wave {
+            format!("\"{}\" wave{}", input.feature, wave)
+        } else {
+            input.feature.clone()
+        };
+
+        let opts = SearchOpts {
+            since: None,
+            repos: None,
+            paths: None,
+            limit: input.limit.or(Some(20)),
+        };
+
+        self.store
+            .search(&fts_query, &opts)
+            .map_err(|e| e.to_string())
+            .and_then(|results| serde_json::to_string(&results).map_err(|e| e.to_string()))
     }
 }
 
