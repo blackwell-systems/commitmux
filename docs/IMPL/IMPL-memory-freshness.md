@@ -1,4 +1,5 @@
 # IMPL: memory-freshness
+<!-- SAW:COMPLETE 2026-03-09 -->
 
 Three P3/P4 completion features: FTS fallback for `commitmux_search_memory`, `commitmux reindex`
 CLI command, and `commitmux install-memory-hook` CLI command.
