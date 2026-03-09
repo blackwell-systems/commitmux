@@ -1116,3 +1116,9 @@ All three features implemented in `src/main.rs`:
 3. Auto-sync in `Serve`: Before `run_mcp_server`, calls `store.list_repos()` and for each repo checks `get_ingest_state`. Syncs if `last_synced_at` is absent (no IngestState row) or `(now - last_synced_at) > 3600`. All output via `eprintln!` to avoid polluting MCP stdout. Errors on individual repos are non-fatal.
 
 Build, clippy (`-D warnings`), and all 89 workspace tests pass.
+
+## Stub Report — Wave 1
+
+65 `unimplemented!()` hits across 3 files — all pre-existing test mock stubs (NullStore, MockStore, StubStore). None introduced by Wave 1 agents (agents used `Ok(vec![])` for cascade stubs). All 89 workspace tests pass; no stubs triggered. No action required.
+
+Files: `crates/embed/src/lib.rs` (21), `crates/ingest/src/lib.rs` (13), `crates/mcp/src/lib.rs` (31).
