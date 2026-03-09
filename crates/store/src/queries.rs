@@ -806,6 +806,33 @@ impl Store for SqliteStore {
         Ok(count as usize)
     }
 
+    fn delete_embeddings_for_repo(&self, repo_id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        // Collect all embed_ids for this repo
+        let embed_ids: Vec<i64> = {
+            let mut stmt = conn.prepare(
+                "SELECT embed_id FROM commit_embed_map WHERE repo_id = ?1",
+            )?;
+            let ids: rusqlite::Result<Vec<i64>> = stmt
+                .query_map(params![repo_id], |row| row.get(0))?
+                .collect();
+            ids?
+        };
+        // Delete from vec0 virtual table one at a time (subquery deletes not supported)
+        for embed_id in &embed_ids {
+            conn.execute(
+                "DELETE FROM commit_embeddings WHERE embed_id = ?1",
+                params![embed_id],
+            )?;
+        }
+        // Delete all map entries for this repo
+        conn.execute(
+            "DELETE FROM commit_embed_map WHERE repo_id = ?1",
+            params![repo_id],
+        )?;
+        Ok(())
+    }
+
     // ── Embedding support ─────────────────────────────────────────────────
 
     fn get_config(&self, key: &str) -> Result<Option<String>> {
@@ -1734,5 +1761,50 @@ mod tests {
         // The returned sha must be the full SHA, not the prefix
         assert_eq!(result.sha, full_sha, "returned sha should be full sha");
         assert!(result.patch_text.contains("added line"));
+    }
+
+    #[test]
+    fn test_delete_embeddings_for_repo() {
+        let store = make_store();
+        let mut repo_input = make_repo_input("deleteembedrepo");
+        repo_input.embed_enabled = true;
+        let repo = store.add_repo(&repo_input).expect("add repo");
+
+        store
+            .upsert_commit(&make_commit(
+                repo.repo_id,
+                "sha0000000000010",
+                "delete embed test commit",
+                1700000000,
+            ))
+            .expect("upsert commit");
+
+        let embedding = vec![0.1f32; 768];
+        store
+            .store_embedding(
+                repo.repo_id,
+                "sha0000000000010",
+                "delete embed test commit",
+                "Test Author",
+                "deleteembedrepo",
+                1700000000,
+                Some("patch preview"),
+                &embedding,
+            )
+            .expect("store embedding");
+
+        let count_before = store
+            .count_embeddings_for_repo(repo.repo_id)
+            .expect("count before delete");
+        assert_eq!(count_before, 1, "expected 1 embedding before delete");
+
+        store
+            .delete_embeddings_for_repo(repo.repo_id)
+            .expect("delete_embeddings_for_repo");
+
+        let count_after = store
+            .count_embeddings_for_repo(repo.repo_id)
+            .expect("count after delete");
+        assert_eq!(count_after, 0, "expected 0 embeddings after delete");
     }
 }
