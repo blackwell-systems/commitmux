@@ -306,10 +306,7 @@ fn install_memory_hook(settings_path: &std::path::Path, command: &str) -> Result
     // Read existing settings or start fresh
     let mut value: serde_json::Value = if settings_path.exists() {
         let raw = std::fs::read_to_string(settings_path).with_context(|| {
-            format!(
-                "Failed to read settings file: {}",
-                settings_path.display()
-            )
+            format!("Failed to read settings file: {}", settings_path.display())
         })?;
         serde_json::from_str(&raw).with_context(|| {
             format!(
@@ -364,15 +361,13 @@ fn install_memory_hook(settings_path: &std::path::Path, command: &str) -> Result
 
     // Write back with pretty formatting, creating parent dirs if needed
     if let Some(parent) = settings_path.parent() {
-        std::fs::create_dir_all(parent).with_context(|| {
-            format!("Failed to create directory: {}", parent.display())
-        })?;
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create directory: {}", parent.display()))?;
     }
-    let pretty = serde_json::to_string_pretty(&value)
-        .context("Failed to serialize settings.json")?;
-    std::fs::write(settings_path, pretty).with_context(|| {
-        format!("Failed to write settings file: {}", settings_path.display())
-    })?;
+    let pretty =
+        serde_json::to_string_pretty(&value).context("Failed to serialize settings.json")?;
+    std::fs::write(settings_path, pretty)
+        .with_context(|| format!("Failed to write settings file: {}", settings_path.display()))?;
 
     println!(
         "Installed: commitmux ingest-memory will run after each Claude Code session.\nSettings: {}",
@@ -1193,7 +1188,10 @@ fn main() -> Result<()> {
             println!("Installed post-commit hook at {}", hook_path.display());
         }
 
-        Commands::InstallMemoryHook { db, claude_settings } => {
+        Commands::InstallMemoryHook {
+            db,
+            claude_settings,
+        } => {
             let settings_path = claude_settings.unwrap_or_else(|| {
                 let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
                 PathBuf::from(home).join(".claude").join("settings.json")
@@ -1532,8 +1530,14 @@ mod tests {
 
         let raw2 = std::fs::read_to_string(&settings_path).expect("read settings after dup");
         let value2: serde_json::Value = serde_json::from_str(&raw2).expect("parse json after dup");
-        let stop2 = value2["hooks"]["Stop"].as_array().expect("Stop array after dup");
-        assert_eq!(stop2.len(), 1, "duplicate guard: should still have exactly one hook group");
+        let stop2 = value2["hooks"]["Stop"]
+            .as_array()
+            .expect("Stop array after dup");
+        assert_eq!(
+            stop2.len(),
+            1,
+            "duplicate guard: should still have exactly one hook group"
+        );
     }
 
     #[test]

@@ -749,3 +749,94 @@ cascade into Agent C's worktree.
 | 2 | C | commitmux_search_memory FTS fallback + mock stubs | TO-DO |
 | 2 | D | commitmux reindex CLI | TO-DO |
 | — | Orch | Post-merge integration + binary smoke test | TO-DO |
+
+---
+
+### Agent B - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-B
+branch: wave1-agent-B
+commit: e93603a05d414311991405695c1995ca4d4f29f3
+files_changed:
+  - src/main.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_install_memory_hook_writes_json
+verification: PASS
+```
+
+Implemented `InstallMemoryHook` command variant and `install_memory_hook` helper function in `src/main.rs`. The helper is extracted for unit testability. Duplicate guard checks for `"commitmux ingest-memory"` substring in existing Stop hook commands. Test covers both the write path (JSON structure validation) and the duplicate prevention path (second call leaves hook count at 1). All 16 unit tests and 1 integration test pass. `cargo clippy -- -D warnings` clean.
+
+---
+
+### Agent A - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-A
+branch: wave1-agent-A
+commit: cc283f2
+files_changed:
+  - crates/types/src/lib.rs
+  - crates/store/src/queries.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_delete_embeddings_for_repo
+verification: PASS
+```
+
+Added `delete_embeddings_for_repo(repo_id: i64) -> Result<()>` to the Store trait and implemented it in SqliteStore. Deletes from the vec0 virtual table (commit_embeddings) row-by-row per embed_id to satisfy sqlite-vec constraints, then clears commit_embed_map entries for the repo. The other Store impls (NullStore, MockStore, StubStore) compiled without stubs — Agent C adds those in Wave 2. All 36 store tests pass, clippy clean.
+
+### Agent D - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave2-agent-D
+branch: wave2-agent-D
+commit: 5a2d51f
+files_changed:
+  - src/main.rs
+interface_deviations:
+  - "--reset-dim does not actually reset embed.dimension in the store: validate_or_store_dimension
+    parses stored '0' or '' as 0, then 0 != actual_dim => bail. The reindex core (delete +
+    re-embed) works correctly. --reset-dim currently prints an advisory message directing the
+    user to manually clear the key via sqlite3. Full --reset-dim support requires either a
+    dedicated store method (delete_config) or a sentinel value path in validate_or_store_dimension."
+out_of_scope_deps: []
+tests_added:
+  - test_reindex_command_deletes_and_reembeds
+verification: PASS
+```
+
+Implemented `commitmux reindex` subcommand in `src/main.rs`. The command:
+1. Opens the store via the standard `resolve_db_path` + `SqliteStore::open` pattern.
+2. Resolves repos: single repo by name (via `get_repo_by_name`) or all repos (via `list_repos`).
+3. For each repo: calls `store.delete_embeddings_for_repo`, then `EmbedConfig::from_store` + `Embedder::new` + `embed_pending` via tokio block_on (matching the Sync handler pattern exactly).
+4. Prints progress per-repo and a final summary line.
+
+The `--reset-dim` flag could not be implemented cleanly without a store `delete_config` method or a special-case `0` path in `validate_or_store_dimension`. Rather than silently do nothing or introduce a subtle bug, the flag prints an advisory message. This is documented as a deviation above. The core reindex functionality is fully correct.
+
+---
+
+### Agent C - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave2-agent-C
+branch: wave2-agent-C
+commit: ffa0100
+files_changed:
+  - crates/mcp/src/lib.rs
+  - crates/embed/src/lib.rs
+  - crates/ingest/src/lib.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added: []
+verification: PASS
+```
+
+FTS fallback implemented in `call_search_memory`: the tokio runtime is built and `embed()` called; any error (connection refused, model not found, runtime failure) maps to the string "Ollama unavailable" and triggers `search_memory_fts`. The FTS results are serialized identically to vector results — no wrapper object added, keeping the response format uniform for callers. `MemoryFtsSearchOpts` added to the top-level imports in `mcp/src/lib.rs`. All four mock stores (`StubStore`, `StubStoreWithRepos`, `NullStore`, `MockStore`) received `delete_embeddings_for_repo` stubs returning `Ok(())`. All 95 workspace tests pass, clippy clean.

@@ -810,9 +810,8 @@ impl Store for SqliteStore {
         let conn = self.conn.lock().unwrap();
         // Collect all embed_ids for this repo
         let embed_ids: Vec<i64> = {
-            let mut stmt = conn.prepare(
-                "SELECT embed_id FROM commit_embed_map WHERE repo_id = ?1",
-            )?;
+            let mut stmt =
+                conn.prepare("SELECT embed_id FROM commit_embed_map WHERE repo_id = ?1")?;
             let ids: rusqlite::Result<Vec<i64>> = stmt
                 .query_map(params![repo_id], |row| row.get(0))?
                 .collect();
