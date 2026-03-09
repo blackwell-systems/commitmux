@@ -1212,10 +1212,14 @@ fn main() -> Result<()> {
                 PathBuf::from(home).join(".claude").join("settings.json")
             });
 
+            let exe = std::env::current_exe()
+                .unwrap_or_else(|_| PathBuf::from("commitmux"))
+                .display()
+                .to_string();
             let command = if let Some(db_path) = db {
-                format!("commitmux ingest-memory --db {}", db_path.display())
+                format!("{exe} ingest-memory --db {}", db_path.display())
             } else {
-                "commitmux ingest-memory".to_string()
+                format!("{exe} ingest-memory")
             };
 
             install_memory_hook(&settings_path, &command)?;
