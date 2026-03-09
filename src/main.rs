@@ -211,6 +211,21 @@ enum Commands {
         #[arg(long, help = "Path to database file")]
         db: Option<PathBuf>,
     },
+    #[command(
+        about = "Install commitmux ingest-memory as a Claude Code Stop hook in ~/.claude/settings.json"
+    )]
+    InstallMemoryHook {
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
+        db: Option<PathBuf>,
+        #[arg(
+            long = "claude-settings",
+            help = "Path to Claude settings.json (default: ~/.claude/settings.json)"
+        )]
+        claude_settings: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -284,6 +299,85 @@ fn validate_git_url(url: &str) -> Result<()> {
             url
         );
     }
+    Ok(())
+}
+
+fn install_memory_hook(settings_path: &std::path::Path, command: &str) -> Result<()> {
+    // Read existing settings or start fresh
+    let mut value: serde_json::Value = if settings_path.exists() {
+        let raw = std::fs::read_to_string(settings_path).with_context(|| {
+            format!(
+                "Failed to read settings file: {}",
+                settings_path.display()
+            )
+        })?;
+        serde_json::from_str(&raw).with_context(|| {
+            format!(
+                "Failed to parse settings.json at {}: not valid JSON",
+                settings_path.display()
+            )
+        })?
+    } else {
+        serde_json::json!({})
+    };
+
+    // Duplicate check: look for "commitmux ingest-memory" in existing Stop hooks
+    if let Some(stop_hooks) = value["hooks"]["Stop"].as_array() {
+        for entry in stop_hooks {
+            if let Some(hooks) = entry["hooks"].as_array() {
+                for hook in hooks {
+                    if let Some(cmd) = hook["command"].as_str() {
+                        if cmd.contains("commitmux ingest-memory") {
+                            println!(
+                                "commitmux ingest-memory is already registered as a Stop hook."
+                            );
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Build the new hook group entry
+    let new_entry = serde_json::json!({
+        "matcher": "",
+        "hooks": [{ "type": "command", "command": command }]
+    });
+
+    // Ensure path hooks.Stop exists as an array and append
+    {
+        let hooks = value
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("settings.json root must be a JSON object"))?
+            .entry("hooks")
+            .or_insert_with(|| serde_json::json!({}));
+        let stop = hooks
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("settings.json 'hooks' must be a JSON object"))?
+            .entry("Stop")
+            .or_insert_with(|| serde_json::json!([]));
+        stop.as_array_mut()
+            .ok_or_else(|| anyhow::anyhow!("settings.json 'hooks.Stop' must be an array"))?
+            .push(new_entry);
+    }
+
+    // Write back with pretty formatting, creating parent dirs if needed
+    if let Some(parent) = settings_path.parent() {
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create directory: {}", parent.display())
+        })?;
+    }
+    let pretty = serde_json::to_string_pretty(&value)
+        .context("Failed to serialize settings.json")?;
+    std::fs::write(settings_path, pretty).with_context(|| {
+        format!("Failed to write settings file: {}", settings_path.display())
+    })?;
+
+    println!(
+        "Installed: commitmux ingest-memory will run after each Claude Code session.\nSettings: {}",
+        settings_path.display()
+    );
     Ok(())
 }
 
@@ -1099,6 +1193,21 @@ fn main() -> Result<()> {
             println!("Installed post-commit hook at {}", hook_path.display());
         }
 
+        Commands::InstallMemoryHook { db, claude_settings } => {
+            let settings_path = claude_settings.unwrap_or_else(|| {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(home).join(".claude").join("settings.json")
+            });
+
+            let command = if let Some(db_path) = db {
+                format!("commitmux ingest-memory --db {}", db_path.display())
+            } else {
+                "commitmux ingest-memory".to_string()
+            };
+
+            install_memory_hook(&settings_path, &command)?;
+        }
+
         Commands::IndexImplDocs { path, project, db } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
@@ -1394,6 +1503,37 @@ mod tests {
             !would_embed,
             "should not attempt embedding when embed_enabled is false, even with --embed-only"
         );
+    }
+
+    #[test]
+    fn test_install_memory_hook_writes_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let settings_path = dir.path().join("settings.json");
+
+        // First call: should write the hook
+        install_memory_hook(&settings_path, "commitmux ingest-memory")
+            .expect("first install should succeed");
+
+        let raw = std::fs::read_to_string(&settings_path).expect("read settings");
+        let value: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
+
+        // Verify structure
+        let stop = value["hooks"]["Stop"].as_array().expect("Stop array");
+        assert_eq!(stop.len(), 1, "should have exactly one Stop hook group");
+        let hooks = stop[0]["hooks"].as_array().expect("hooks array");
+        assert_eq!(hooks.len(), 1, "hook group should have one hook");
+        assert_eq!(hooks[0]["type"], "command");
+        assert_eq!(hooks[0]["command"], "commitmux ingest-memory");
+        assert_eq!(stop[0]["matcher"], "");
+
+        // Second call: duplicate guard should fire, no duplicate added
+        install_memory_hook(&settings_path, "commitmux ingest-memory")
+            .expect("duplicate call should succeed without error");
+
+        let raw2 = std::fs::read_to_string(&settings_path).expect("read settings after dup");
+        let value2: serde_json::Value = serde_json::from_str(&raw2).expect("parse json after dup");
+        let stop2 = value2["hooks"]["Stop"].as_array().expect("Stop array after dup");
+        assert_eq!(stop2.len(), 1, "duplicate guard: should still have exactly one hook group");
     }
 
     #[test]
