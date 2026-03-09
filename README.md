@@ -28,7 +28,7 @@ The index lives in a single SQLite file on your machine. The MCP server runs as 
 
 ## How it works
 
-commitmux walks your git history using libgit2 (no `git` binary required), stores commits in SQLite with FTS5 full-text indexing over subjects, bodies, and patch previews, and compresses raw diffs with zstd. Semantic search stores float32 embeddings alongside commit metadata — cosine similarity is computed in-process with no external vector database. The MCP server speaks JSON-RPC 2.0 over stdio; your agent host runs it as a subprocess and the five read-only tools become available to the agent.
+commitmux walks your git history using libgit2 (no `git` binary required), stores commits in SQLite with FTS5 full-text indexing over subjects, bodies, and patch previews, and compresses raw diffs with zstd. Semantic search stores float32 embeddings alongside commit metadata — cosine similarity is computed in-process with no external vector database. The MCP server speaks JSON-RPC 2.0 over stdio; your agent host runs it as a subprocess and the eight read-only tools become available to the agent.
 
 ## Quick start
 
@@ -105,6 +105,36 @@ The agent calls `commitmux_touches` with `path_glob: "auth/"` and a `since` time
 **"Find commits related to backpressure and retry logic"** (semantic search)
 
 The agent calls `commitmux_search_semantic` with that natural language query. commitmux embeds the query and returns commits by vector similarity — surfacing relevant work even when the exact words don't appear in the commit message.
+
+## Memory search
+
+commitmux also indexes claudewatch memory files for semantic and keyword search. This gives agents access to prior session summaries, task history, blockers, and decisions — not just commit history.
+
+**Setup:**
+
+```sh
+# Index memory files manually (or let install-memory-hook do it automatically)
+commitmux ingest-memory
+
+# Install the Stop hook to auto-ingest after every Claude Code session
+commitmux install-memory-hook
+```
+
+**Usage (via MCP):**
+
+Once memory is indexed, the `commitmux_search_memory` MCP tool is available to agents. It searches by meaning (semantic) with automatic FTS5 fallback when Ollama is unavailable:
+
+```json
+{
+  "name": "commitmux_search_memory",
+  "arguments": {
+    "query": "how did we implement rate limiting",
+    "project": "api-server"
+  }
+}
+```
+
+Memory documents have source types: `session_summary`, `task`, `blocker`, `decision`, `memory_file`, `impl_doc`. Filter by `source_type` to narrow results.
 
 ## CLI reference
 
@@ -247,6 +277,64 @@ commitmux config set embed.model text-embedding-3-small
 
 Configuration is stored in the database. Values persist across commands.
 
+### `install-hook`
+
+Install a post-commit git hook in a repository that calls `commitmux sync` after every commit. Keeps the index fresh without manual intervention.
+
+```sh
+commitmux install-hook <path>
+commitmux install-hook ~/code/myproject
+commitmux install-hook ~/code/myproject --force   # overwrite existing hook
+```
+
+`--force` overwrites an existing hook. Without it, the command prints a warning and exits if a hook already exists.
+
+### `install-memory-hook`
+
+Register `commitmux ingest-memory` as a Claude Code Stop hook in `~/.claude/settings.json`. After installation, memory files are automatically ingested and embedded at the end of every Claude Code session.
+
+```sh
+commitmux install-memory-hook
+commitmux install-memory-hook --db /data/commitmux.sqlite3
+commitmux install-memory-hook --claude-settings /path/to/settings.json
+```
+
+Duplicate guard: if `commitmux ingest-memory` is already registered, the command prints "Already installed." and exits without modifying the file.
+
+### `ingest-memory`
+
+Scan `~/.claude/projects/*/memory/*.md` and index memory documents for semantic search. Incremental — only re-embeds files that have changed since last ingest.
+
+```sh
+commitmux ingest-memory
+commitmux ingest-memory --claude-home /path/to/.claude
+commitmux ingest-memory --db /data/commitmux.sqlite3
+```
+
+### `index-impl-docs`
+
+Index SAW protocol IMPL docs (`docs/IMPL/IMPL-*.md`) from a working tree into the memory search index. Enables agents to search prior planning documents by content.
+
+```sh
+commitmux index-impl-docs <path>
+commitmux index-impl-docs ~/code/myproject
+commitmux index-impl-docs ~/code/myproject --project myproject
+```
+
+`--project` tags the indexed documents with a project name (defaults to the directory name).
+
+### `reindex`
+
+Delete all embeddings for one or all repositories and re-embed from scratch. Use when switching embedding models or after bulk history imports.
+
+```sh
+commitmux reindex
+commitmux reindex --repo myproject
+commitmux reindex --reset-dim   # prints advisory to manually clear embed.dimension
+```
+
+`--reset-dim` is for use when switching embedding models. Currently prints a remediation advisory rather than automatically clearing the stored dimension — use `commitmux config set embed.dimension ""` if needed.
+
 ### `serve`
 
 Start the MCP server on stdio. This is the command your agent host runs — not meant to be invoked directly in a terminal.
@@ -258,9 +346,11 @@ commitmux serve --db /data/commitmux.sqlite3
 
 The server reads newline-delimited JSON-RPC from stdin and writes responses to stdout. It runs until stdin is closed.
 
+On startup, `commitmux serve` checks each indexed repo's `last_synced_at` and automatically syncs any repo that hasn't been synced in the last hour. Output goes to stderr to avoid polluting MCP stdout.
+
 ## MCP tools reference
 
-The server exposes five tools. All tools are read-only.
+The server exposes eight tools. All tools are read-only.
 
 ### `commitmux_search_semantic`
 
@@ -310,7 +400,7 @@ Results include a `score` field (0–1) indicating similarity to the query. High
 
 ### `commitmux_search`
 
-Full-text search over commit subjects, bodies, and patch previews (first 500 characters of each diff). Uses SQLite FTS5.
+Full-text search over commit subjects, bodies, and patch previews (first 2000 characters of each diff). Uses SQLite FTS5.
 
 **Input schema:**
 
@@ -479,6 +569,55 @@ Retrieve the raw unified diff for a commit. Patches are stored zstd-compressed a
 
 Commits with patches larger than 1 MB at ingest time have their patch skipped. Binary-only diffs are also skipped. `commitmux_get_commit` will still return metadata and file list for those commits.
 
+### `commitmux_search_memory`
+
+Semantic search over claudewatch memory files (session summaries, tasks, blockers, decisions). Enables agents to find prior context and solutions across all projects by meaning. Falls back to FTS5 keyword search automatically if the embedding service (Ollama) is unavailable.
+
+**Input schema:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `query` | string | yes | Natural language query |
+| `project` | string | no | Filter by project name |
+| `source_type` | string | no | Filter by source: `session_summary`, `task`, `blocker`, `decision`, `memory_file`, `impl_doc` |
+| `limit` | integer | no | Max results. Default: 10 |
+
+**Example call:**
+
+```json
+{
+  "name": "commitmux_search_memory",
+  "arguments": {
+    "query": "how did we implement rate limiting",
+    "project": "api-server"
+  }
+}
+```
+
+### `commitmux_search_saw`
+
+Search commit history for SAW (Scout-and-Wave) protocol merge commits by feature name and optional wave number. Constructs the right FTS5 query internally.
+
+**Input schema:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `feature` | string | yes | Feature or topic to search for |
+| `wave` | integer | no | Restrict to a specific wave number |
+| `limit` | integer | no | Max results. Default: 10 |
+
+**Example call:**
+
+```json
+{
+  "name": "commitmux_search_saw",
+  "arguments": {
+    "feature": "memory search",
+    "wave": 2
+  }
+}
+```
+
 ## Configuration
 
 The database path is resolved in this order:
@@ -561,7 +700,7 @@ See [docs/mcp.md](docs/mcp.md) for the full MCP integration reference, including
 ## Implementation notes
 
 - Uses [git2](https://github.com/rust-lang/git2-rs) (libgit2 bindings) for commit ingestion. No `git` binary required.
-- Patches stored as zstd-compressed blobs (level 3). FTS5 index covers subject, body, and the first 500 characters of each patch.
+- Patches stored as zstd-compressed blobs (level 3). FTS5 index covers subject, body, and the first 2000 characters of each patch.
 - SQLite WAL mode enabled. The database is safe for reads during a concurrent sync.
 - The MCP server is synchronous (no async runtime). Each request is handled inline on the main thread.
 - Embeddings are stored as raw float32 blobs in SQLite alongside commit metadata. Similarity search uses cosine distance computed in-process — no separate vector database required.
