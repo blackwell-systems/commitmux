@@ -230,9 +230,15 @@ enum Commands {
     Reindex {
         #[arg(long, help = "Name of repo to reindex (omit to reindex all)")]
         repo: Option<String>,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
+        )]
         db: Option<PathBuf>,
-        #[arg(long = "reset-dim", help = "Reset stored embed.dimension (use when switching embedding models)")]
+        #[arg(
+            long = "reset-dim",
+            help = "Reset stored embed.dimension (use when switching embedding models)"
+        )]
         reset_dim: bool,
     },
 }
@@ -1215,7 +1221,11 @@ fn main() -> Result<()> {
             install_memory_hook(&settings_path, &command)?;
         }
 
-        Commands::Reindex { repo, db, reset_dim } => {
+        Commands::Reindex {
+            repo,
+            db,
+            reset_dim,
+        } => {
             let db_path = resolve_db_path(db);
             if !db_path.exists() {
                 anyhow::bail!(
@@ -1685,7 +1695,11 @@ mod tests {
         assert!(cli.is_ok(), "reindex should parse with --repo");
         if let Ok(parsed) = cli {
             match parsed.command {
-                Commands::Reindex { repo, db: _, reset_dim } => {
+                Commands::Reindex {
+                    repo,
+                    db: _,
+                    reset_dim,
+                } => {
                     assert_eq!(repo, Some("myrepo".to_string()), "--repo should be parsed");
                     assert!(!reset_dim, "--reset-dim should default to false");
                 }
@@ -1698,7 +1712,11 @@ mod tests {
         assert!(cli.is_ok(), "reindex should parse with --reset-dim");
         if let Ok(parsed) = cli {
             match parsed.command {
-                Commands::Reindex { repo, db: _, reset_dim } => {
+                Commands::Reindex {
+                    repo,
+                    db: _,
+                    reset_dim,
+                } => {
                     assert!(reset_dim, "--reset-dim flag should be true");
                     assert!(repo.is_none(), "repo should be None when not provided");
                 }
