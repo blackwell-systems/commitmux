@@ -97,6 +97,9 @@ CREATE TABLE IF NOT EXISTS memory_docs (
 
 CREATE INDEX IF NOT EXISTS idx_memory_docs_project ON memory_docs(project);
 
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_docs_fts
+    USING fts5(content, content='memory_docs', content_rowid='doc_id');
+
 CREATE TABLE IF NOT EXISTS memory_embed_map (
     embed_id INTEGER PRIMARY KEY AUTOINCREMENT,
     doc_id   INTEGER NOT NULL UNIQUE

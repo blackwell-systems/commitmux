@@ -232,8 +232,8 @@ impl Store for SqliteStore {
             params![patch.repo_id, patch.sha, compressed],
         )?;
 
-        // Update patch_preview in commits (first 500 chars of preview).
-        let preview: String = patch.patch_preview.chars().take(500).collect();
+        // Update patch_preview in commits (first 2000 chars of preview).
+        let preview: String = patch.patch_preview.chars().take(2000).collect();
 
         // Get the current rowid and existing FTS data so we can update FTS.
         let row: Option<(i64, String, Option<String>)> = conn
@@ -713,20 +713,20 @@ impl Store for SqliteStore {
     ) -> Result<Option<PatchResult>> {
         let conn = self.conn.lock().unwrap();
 
-        let blob: Option<Vec<u8>> = conn
+        let row: Option<(Vec<u8>, String)> = conn
             .query_row(
-                "SELECT cp.patch_blob
+                "SELECT cp.patch_blob, cp.sha
                  FROM commit_patches cp
                  JOIN repos r ON r.repo_id = cp.repo_id
-                 WHERE r.name = ?1 AND cp.sha = ?2",
+                 WHERE r.name = ?1 AND cp.sha LIKE ?2 || '%'",
                 params![repo_name, sha],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
 
-        match blob {
+        match row {
             None => Ok(None),
-            Some(compressed) => {
+            Some((compressed, full_sha)) => {
                 let decompressed = zstd::decode_all(compressed.as_slice())
                     .map_err(commitmux_types::CommitmuxError::Io)?;
 
@@ -742,7 +742,7 @@ impl Store for SqliteStore {
 
                 Ok(Some(PatchResult {
                     repo: repo_name.to_string(),
-                    sha: sha.to_string(),
+                    sha: full_sha,
                     patch_text,
                 }))
             }
@@ -1013,6 +1013,17 @@ impl Store for SqliteStore {
             params![input.source],
             |row| row.get(0),
         )?;
+
+        // Sync FTS index: delete old entry then insert new one.
+        let _ = conn.execute(
+            "INSERT INTO memory_docs_fts(memory_docs_fts, rowid, content) VALUES('delete', ?1, ?2)",
+            params![doc_id, &input.content],
+        );
+        conn.execute(
+            "INSERT INTO memory_docs_fts(rowid, content) VALUES(?1, ?2)",
+            params![doc_id, &input.content],
+        )?;
+
         Ok(MemoryDoc {
             doc_id,
             source: input.source.clone(),
@@ -1167,11 +1178,63 @@ impl Store for SqliteStore {
 
     fn search_memory_fts(
         &self,
-        _query: &str,
-        _opts: &MemoryFtsSearchOpts,
+        query: &str,
+        opts: &MemoryFtsSearchOpts,
     ) -> Result<Vec<MemoryMatch>> {
-        // Stub — full FTS implementation is Agent D's responsibility (Wave 2)
-        Ok(vec![])
+        let conn = self.conn.lock().unwrap();
+        let limit = opts.limit.unwrap_or(10) as i64;
+
+        // Build dynamic WHERE clause for optional filters.
+        let mut conditions = vec!["memory_docs_fts MATCH ?1".to_string()];
+        let mut bind_vals: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        let mut param_idx = 2usize; // ?1 is the FTS query
+
+        if let Some(ref project) = opts.project {
+            conditions.push(format!("md.project = ?{}", param_idx));
+            bind_vals.push(Box::new(project.clone()));
+            param_idx += 1;
+        }
+        if let Some(ref source_type) = opts.source_type {
+            conditions.push(format!("md.source_type = ?{}", param_idx));
+            bind_vals.push(Box::new(source_type.clone()));
+            param_idx += 1;
+        }
+
+        let where_clause = conditions.join(" AND ");
+        let sql = format!(
+            "SELECT md.doc_id, md.source, md.project, md.source_type, md.content,
+                    bm25(memory_docs_fts) AS score
+             FROM memory_docs_fts
+             JOIN memory_docs md ON md.doc_id = memory_docs_fts.rowid
+             WHERE {}
+             ORDER BY score
+             LIMIT ?{}",
+            where_clause, param_idx
+        );
+
+        bind_vals.push(Box::new(limit));
+
+        let mut stmt = conn.prepare(&sql)?;
+
+        let all_params: Vec<&dyn rusqlite::types::ToSql> =
+            std::iter::once(&query as &dyn rusqlite::types::ToSql)
+                .chain(bind_vals.iter().map(|b| b.as_ref()))
+                .collect();
+
+        let results: rusqlite::Result<Vec<MemoryMatch>> = stmt
+            .query_map(all_params.as_slice(), |row| {
+                Ok(MemoryMatch {
+                    doc_id: row.get(0)?,
+                    source: row.get(1)?,
+                    project: row.get(2)?,
+                    source_type: row.get(3)?,
+                    content: row.get(4)?,
+                    score: row.get::<_, f64>(5)? as f32,
+                })
+            })?
+            .collect();
+
+        Ok(results?)
     }
 }
 
@@ -1610,5 +1673,66 @@ mod tests {
             .count_embeddings_for_repo(repo.repo_id)
             .expect("count_embeddings_for_repo");
         assert_eq!(count, 3, "expected 3 embeddings to match stored count");
+    }
+
+    #[test]
+    fn test_search_memory_fts_basic() {
+        use commitmux_types::{MemoryDocInput, MemoryFtsSearchOpts, MemorySourceType};
+
+        let store = make_store();
+
+        let input = MemoryDocInput {
+            source: "test://fts-doc-1".to_string(),
+            project: "myproject".to_string(),
+            source_type: MemorySourceType::MemoryFile,
+            content: "The quick brown fox jumps over the lazy dog".to_string(),
+            file_mtime: 0,
+        };
+        store.upsert_memory_doc(&input).expect("upsert memory doc");
+
+        let opts = MemoryFtsSearchOpts {
+            project: None,
+            source_type: None,
+            limit: Some(5),
+        };
+        let results = store
+            .search_memory_fts("quick brown", &opts)
+            .expect("search_memory_fts");
+
+        assert!(!results.is_empty(), "expected at least one FTS result");
+        assert_eq!(results[0].source, "test://fts-doc-1");
+        assert!(results[0].content.contains("quick brown fox"));
+    }
+
+    #[test]
+    fn test_get_patch_prefix_sha() {
+        use commitmux_types::CommitPatch;
+
+        let store = make_store();
+        let repo = store
+            .add_repo(&make_repo_input("patchprefixrepo"))
+            .expect("add repo");
+
+        let full_sha = "abcdef1234567890abcdef1234567890abcdef12";
+        let commit = make_commit(repo.repo_id, full_sha, "patch prefix test", 1700000000);
+        store.upsert_commit(&commit).expect("upsert commit");
+
+        let patch = CommitPatch {
+            repo_id: repo.repo_id,
+            sha: full_sha.to_string(),
+            patch_blob: b"diff --git a/foo.rs b/foo.rs\n+added line".to_vec(),
+            patch_preview: "diff --git a/foo.rs".to_string(),
+        };
+        store.upsert_patch(&patch).expect("upsert patch");
+
+        // Lookup by 8-char prefix
+        let result = store
+            .get_patch("patchprefixrepo", "abcdef12", None)
+            .expect("get_patch")
+            .expect("should be Some");
+
+        // The returned sha must be the full SHA, not the prefix
+        assert_eq!(result.sha, full_sha, "returned sha should be full sha");
+        assert!(result.patch_text.contains("added line"));
     }
 }
