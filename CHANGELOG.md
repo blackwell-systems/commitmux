@@ -9,6 +9,30 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`commitmux install-hook <repo>`** — writes a `post-commit` git hook to `.git/hooks/post-commit` that calls `commitmux sync` after every commit, keeping the index fresh without manual intervention. `--force` flag to overwrite an existing hook.
+
+- **`commitmux index-impl-docs <path>`** — indexes SAW protocol IMPL docs (`docs/IMPL/IMPL-*.md`) from a working tree into the memory search index. Enables agents to search prior planning documents by content. Uses `--project` to tag results; defaults to directory name.
+
+- **Auto-sync on MCP server startup** — `commitmux serve` now checks each indexed repo's `last_synced_at` on startup and syncs any repo stale by more than 1 hour before entering the JSON-RPC loop. All output to stderr to avoid polluting MCP stdout.
+
+- **`commitmux_search_saw` MCP tool** — searches commit history for SAW (Scout-and-Wave) protocol merge commits by feature name and optional wave number. Constructs the right FTS5 query internally; callers pass `feature` and optionally `wave` (integer). Returns results ranked by relevance.
+
+- **FTS5 keyword search over memory docs** — `commitmux_search_memory` now has a keyword fallback (`commitmux_search_memory` still vector-first; new `search_memory_fts` internal method provides FTS5 over `memory_docs.content`). Works without Ollama. New `memory_docs_fts` virtual table maintained automatically on every `upsert_memory_doc`.
+
+- **`ImplDoc` memory source type** — `MemorySourceType::ImplDoc` (`"impl_doc"`) for documents indexed via `index-impl-docs`, distinct from `MemoryFile` entries.
+
+### Changed
+
+- **`patch_preview` cap raised 500 → 2000 chars** — FTS5 search now indexes up to 2000 characters of each commit's diff preview, improving search recall for large commits and commits with bodies embedded in the diff (e.g. SAW completion reports).
+
+- **`commitmux_touches` description clarified** — MCP tool schema now documents that `path_glob` uses substring matching (`LIKE %pattern%`), not shell glob syntax. Glob patterns like `src/**/*.rs` will not work; use `src/` or `.rs` instead.
+
+### Fixed
+
+- **`commitmux_get_patch` now accepts prefix SHAs** — previously required an exact full SHA, while `commitmux_get_commit` accepted prefix SHAs. Both tools now accept the same short SHA format. The returned `sha` field is always the full SHA from the database.
+
+- **Embedding dimension mismatch now errors explicitly** — switching embedding models with an existing index previously silently mixed incompatible vectors, producing nonsense ANN results. `commitmux embed` now validates the embedding dimension against the value stored in the config table on first use and returns a clear error with remediation instructions if dimensions differ.
+
 - **CI workflow** — `.github/workflows/ci.yml` runs on every push and PR to `main`. Three sequential jobs: `Lint & Format` (rustfmt check + clippy `-D warnings`), `Test` (`cargo test --workspace`), `Build` (cross-compile check against linux/darwin × amd64/arm64 via `cargo check`). Uses `dtolnay/rust-toolchain@stable` and `Swatinem/rust-cache` for fast incremental builds.
 
 - **Memory search**: `commitmux_search_memory` MCP tool — semantic search over claudewatch memory files (session summaries, tasks, blockers, decisions). Enables AI agents to find prior context and solutions across all projects by meaning, not just keywords. Uses the same embedding infrastructure as commit search.
