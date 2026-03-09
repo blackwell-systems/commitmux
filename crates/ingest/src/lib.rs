@@ -191,6 +191,9 @@ mod tests {
         ) -> Result<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
         }
+        fn delete_embeddings_for_repo(&self, _repo_id: i64) -> Result<()> {
+            Ok(())
+        }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
