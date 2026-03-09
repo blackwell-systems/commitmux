@@ -9,6 +9,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`commitmux install-memory-hook`** — registers `commitmux ingest-memory` as a Claude Code `Stop` hook in `~/.claude/settings.json`. Memory files are automatically ingested and embedded after every Claude Code session, keeping semantic search up-to-date with no manual steps. Duplicate guard prevents double-registration. Writes the absolute binary path so the hook works in non-interactive shells where `~/.cargo/bin` may not be on `PATH`.
+
+- **`commitmux reindex [--repo NAME]`** — deletes all embeddings for one or all repositories and re-embeds from scratch. Use when switching embedding models or after bulk history imports. `--reset-dim` flag prints an advisory to manually clear `embed.dimension` (full automated reset requires a future `delete_config` store method).
+
+- **`Store::delete_embeddings_for_repo`** — new store trait method that clears all embedding data for a given repo (both `commit_embeddings` vec0 rows and `commit_embed_map` entries). Deletes from the sqlite-vec virtual table row-by-row per embed_id to satisfy vec0 constraints.
+
+- **FTS fallback in `commitmux_search_memory`** — if Ollama is unreachable or returns an error during query embedding, the MCP tool transparently falls back to FTS5 keyword search and returns results in the same JSON format. Callers receive useful results regardless of whether the embedding service is running.
+
 - **`commitmux install-hook <repo>`** — writes a `post-commit` git hook to `.git/hooks/post-commit` that calls `commitmux sync` after every commit, keeping the index fresh without manual intervention. `--force` flag to overwrite an existing hook.
 
 - **`commitmux index-impl-docs <path>`** — indexes SAW protocol IMPL docs (`docs/IMPL/IMPL-*.md`) from a working tree into the memory search index. Enables agents to search prior planning documents by content. Uses `--project` to tag results; defaults to directory name.
