@@ -1,5 +1,43 @@
 use commitmux_types::{EmbedCommit, Store};
 
+// ── Dimension validation ────────────────────────────────────────────────────
+
+pub const CONFIG_KEY_EMBED_DIM: &str = "embed.dimension";
+
+/// Validates that the embedding dimension matches the stored dimension for this index.
+/// On first call (no stored dimension), stores the dimension and returns Ok.
+/// On subsequent calls, returns Err if the dimension has changed, preventing silent
+/// corruption when users switch embedding models.
+pub fn validate_or_store_dimension(
+    store: &dyn commitmux_types::Store,
+    embedding: &[f32],
+) -> anyhow::Result<()> {
+    let dim = embedding.len();
+    match store.get_config(CONFIG_KEY_EMBED_DIM).map_err(|e| anyhow::anyhow!("{e}"))? {
+        None => {
+            store
+                .set_config(CONFIG_KEY_EMBED_DIM, &dim.to_string())
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            Ok(())
+        }
+        Some(stored) => {
+            let stored_dim: usize = stored.parse().unwrap_or(0);
+            if stored_dim != dim {
+                anyhow::bail!(
+                    "Embedding dimension mismatch: index was built with {}-dimensional vectors, \
+                     but current model produces {} dimensions. \
+                     Run 'commitmux reindex --repo <name>' to rebuild embeddings, \
+                     or switch back to the original model ({}-dim).",
+                    stored_dim,
+                    dim,
+                    stored_dim
+                )
+            }
+            Ok(())
+        }
+    }
+}
+
 // ── EmbedConfig ────────────────────────────────────────────────────────────
 
 pub struct EmbedConfig {
@@ -144,6 +182,7 @@ pub async fn embed_pending(
         skipped: 0,
         failed: 0,
     };
+    let mut first_checked = false;
 
     loop {
         let batch = store
@@ -158,6 +197,10 @@ pub async fn embed_pending(
             let doc = build_embed_doc(commit);
             match embedder.embed(&doc).await {
                 Ok(embedding) => {
+                    if !first_checked {
+                        validate_or_store_dimension(store, &embedding)?;
+                        first_checked = true;
+                    }
                     match store.store_embedding(
                         commit.repo_id,
                         &commit.sha,
@@ -256,16 +299,28 @@ mod tests {
     use commitmux_types::{EmbedCommit, Result, SearchResult, SemanticSearchOpts, Store};
 
     // ── NullStore mock ──────────────────────────────────────────────────────
-    // NOTE: This will fail to compile because Wave 1A's new methods don't exist
-    // in this worktree yet. That is expected — documented as out_of_scope_build_blockers.
 
-    struct NullStore;
+    struct NullStore {
+        config: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    }
+
+    impl NullStore {
+        fn new() -> Self {
+            Self {
+                config: std::sync::Mutex::new(Default::default()),
+            }
+        }
+    }
 
     impl Store for NullStore {
-        fn get_config(&self, _key: &str) -> Result<Option<String>> {
-            Ok(None)
+        fn get_config(&self, key: &str) -> Result<Option<String>> {
+            Ok(self.config.lock().unwrap().get(key).cloned())
         }
-        fn set_config(&self, _key: &str, _value: &str) -> Result<()> {
+        fn set_config(&self, key: &str, value: &str) -> Result<()> {
+            self.config
+                .lock()
+                .unwrap()
+                .insert(key.to_string(), value.to_string());
             Ok(())
         }
         fn get_commits_without_embeddings(
@@ -493,7 +548,7 @@ mod tests {
 
     #[test]
     fn test_embed_config_defaults() {
-        let store = NullStore;
+        let store = NullStore::new();
         let config =
             EmbedConfig::from_store(&store).expect("from_store should succeed with NullStore");
         assert_eq!(config.model, "nomic-embed-text");
@@ -586,6 +641,58 @@ mod tests {
         assert_eq!(
             content_portion, short_content,
             "short content should not be truncated"
+        );
+    }
+
+    // ── Dimension validation tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_validate_dimension_first_call_stores() {
+        let store = NullStore::new();
+        let embedding: Vec<f32> = vec![0.0; 768];
+        // First call should store the dimension and return Ok
+        let result = validate_or_store_dimension(&store, &embedding);
+        assert!(result.is_ok(), "first call should succeed: {:?}", result);
+        // Confirm the dimension was stored
+        let stored = store
+            .get_config(CONFIG_KEY_EMBED_DIM)
+            .expect("get_config should succeed");
+        assert_eq!(stored, Some("768".to_string()), "dimension should be stored as '768'");
+    }
+
+    #[test]
+    fn test_validate_dimension_match_ok() {
+        let store = NullStore::new();
+        let embedding: Vec<f32> = vec![0.0; 768];
+        // First call stores the dimension
+        validate_or_store_dimension(&store, &embedding).expect("first call should succeed");
+        // Second call with same dimension should also succeed
+        let result = validate_or_store_dimension(&store, &embedding);
+        assert!(result.is_ok(), "second call with same dimension should succeed: {:?}", result);
+    }
+
+    #[test]
+    fn test_validate_dimension_mismatch_errors() {
+        let store = NullStore::new();
+        let embedding_768: Vec<f32> = vec![0.0; 768];
+        let embedding_384: Vec<f32> = vec![0.0; 384];
+        // First call stores 768-dim
+        validate_or_store_dimension(&store, &embedding_768).expect("first call should succeed");
+        // Second call with 384-dim should return an error
+        let result = validate_or_store_dimension(&store, &embedding_384);
+        assert!(result.is_err(), "dimension mismatch should return Err");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("768"),
+            "error should mention stored dimension (768): {err_msg}"
+        );
+        assert!(
+            err_msg.contains("384"),
+            "error should mention current dimension (384): {err_msg}"
+        );
+        assert!(
+            err_msg.contains("reindex"),
+            "error should mention reindex command: {err_msg}"
         );
     }
 }
