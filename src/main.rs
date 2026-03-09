@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use commitmux_embed::EmbedConfig;
 use commitmux_ingest::Git2Ingester;
@@ -185,6 +186,24 @@ enum Commands {
             long,
             help = "Path to database file (default: ~/.commitmux/db.sqlite3, or $COMMITMUX_DB)"
         )]
+        db: Option<PathBuf>,
+    },
+    #[command(about = "Install a post-commit git hook that calls 'commitmux sync' after every commit")]
+    InstallHook {
+        #[arg(help = "Path to the git repository root")]
+        repo: PathBuf,
+        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3)")]
+        db: Option<PathBuf>,
+        #[arg(long, help = "Overwrite existing hook without prompting")]
+        force: bool,
+    },
+    #[command(about = "Index IMPL docs from docs/IMPL/IMPL-*.md files in a working tree")]
+    IndexImplDocs {
+        #[arg(help = "Path to working tree root (must contain docs/IMPL/)")]
+        path: PathBuf,
+        #[arg(long, help = "Project name for tagging (default: directory name)")]
+        project: Option<String>,
+        #[arg(long, help = "Path to database file")]
         db: Option<PathBuf>,
     },
 }
@@ -829,6 +848,54 @@ fn main() -> Result<()> {
             }
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+            // Auto-sync: sync repos that have never been synced or were last synced > 1 hour ago
+            let now_unix = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64;
+            match store.list_repos() {
+                Ok(repos) => {
+                    for r in &repos {
+                        let needs_sync = match store.get_ingest_state(r.repo_id) {
+                            Ok(None) => true,
+                            Ok(Some(state)) => (now_unix - state.last_synced_at) > 3600,
+                            Err(e) => {
+                                eprintln!(
+                                    "commitmux: warning: failed to get ingest state for '{}': {}",
+                                    r.name, e
+                                );
+                                false
+                            }
+                        };
+                        if needs_sync {
+                            eprintln!("commitmux: syncing '{}' on startup...", r.name);
+                            let ingester = Git2Ingester::new();
+                            let config = IgnoreConfig::default();
+                            match ingester.sync_repo(r, &store, &config) {
+                                Ok(summary) => {
+                                    eprintln!(
+                                        "commitmux: sync '{}' complete: {} indexed, {} already indexed",
+                                        r.name,
+                                        summary.commits_indexed,
+                                        summary.commits_already_indexed
+                                    );
+                                }
+                                Err(e) => {
+                                    eprintln!(
+                                        "commitmux: warning: sync failed for '{}': {}",
+                                        r.name, e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("commitmux: warning: failed to list repos for auto-sync: {}", e);
+                }
+            }
+
             let store: Arc<dyn commitmux_types::Store + 'static> = Arc::new(store);
             eprintln!("commitmux MCP server ready (JSON-RPC over stdio). Press Ctrl+C to stop.");
             commitmux_mcp::run_mcp_server(store).context("MCP server error")?;
@@ -975,6 +1042,138 @@ fn main() -> Result<()> {
                 }
                 Err(e) => eprintln!("Warning: embed config error: {e}"),
             }
+        }
+
+        Commands::InstallHook { repo, db: _, force } => {
+            let canonical = repo.canonicalize().with_context(|| {
+                format!("Failed to canonicalize repo path: {}", repo.display())
+            })?;
+
+            // Verify it's a git repository
+            let git_dir = canonical.join(".git");
+            if !git_dir.is_dir() {
+                anyhow::bail!("'{}' is not a git repository (no .git directory found)", canonical.display());
+            }
+
+            let hooks_dir = git_dir.join("hooks");
+            std::fs::create_dir_all(&hooks_dir).with_context(|| {
+                format!("Failed to create hooks directory: {}", hooks_dir.display())
+            })?;
+
+            let hook_path = hooks_dir.join("post-commit");
+
+            if hook_path.exists() && !force {
+                eprintln!(
+                    "Warning: post-commit hook already exists at {}. Use --force to overwrite.",
+                    hook_path.display()
+                );
+                return Ok(());
+            }
+
+            let hook_content =
+                "#!/bin/sh\ncommitmux sync --repo \"$(git rev-parse --show-toplevel)\" 2>/dev/null || true\n";
+            std::fs::write(&hook_path, hook_content)
+                .with_context(|| format!("Failed to write hook to {}", hook_path.display()))?;
+
+            // chmod +x (mode 0o755)
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let perms = std::fs::Permissions::from_mode(0o755);
+                std::fs::set_permissions(&hook_path, perms).with_context(|| {
+                    format!("Failed to set permissions on {}", hook_path.display())
+                })?;
+            }
+
+            println!(
+                "Installed post-commit hook at {}",
+                hook_path.display()
+            );
+        }
+
+        Commands::IndexImplDocs { path, project, db } => {
+            let db_path = resolve_db_path(db);
+            if !db_path.exists() {
+                anyhow::bail!(
+                    "Database not found at {}. Run 'commitmux init' first.",
+                    db_path.display()
+                );
+            }
+            let store = SqliteStore::open(&db_path)
+                .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
+
+            let canonical = path.canonicalize().with_context(|| {
+                format!("Failed to canonicalize path: {}", path.display())
+            })?;
+
+            // Derive project name from directory name if not provided
+            let project_name = project.unwrap_or_else(|| {
+                canonical
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string()
+            });
+
+            let impl_dir = canonical.join("docs").join("IMPL");
+            if !impl_dir.is_dir() {
+                anyhow::bail!(
+                    "No docs/IMPL/ directory found at {}",
+                    impl_dir.display()
+                );
+            }
+
+            let mut total_ingested = 0usize;
+            let mut total_skipped = 0usize;
+
+            for entry in std::fs::read_dir(&impl_dir)
+                .with_context(|| format!("Failed to read directory: {}", impl_dir.display()))?
+            {
+                let entry = entry?;
+                let entry_path = entry.path();
+
+                if entry_path.extension().and_then(|e| e.to_str()) != Some("md") {
+                    continue;
+                }
+
+                let metadata = std::fs::metadata(&entry_path)?;
+                let file_mtime = metadata
+                    .modified()
+                    .unwrap_or(UNIX_EPOCH)
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+
+                let source = entry_path.to_string_lossy().to_string();
+
+                // Skip if already indexed with same or newer mtime
+                if let Ok(Some(existing)) = store.get_memory_doc_by_source(&source) {
+                    if existing.file_mtime >= file_mtime {
+                        total_skipped += 1;
+                        continue;
+                    }
+                }
+
+                let content = std::fs::read_to_string(&entry_path)?;
+                // NOTE: Using MemorySourceType::MemoryFile as fallback.
+                // Change to MemorySourceType::ImplDoc post-merge once Agent A's changes are merged.
+                let input = commitmux_types::MemoryDocInput {
+                    source,
+                    project: project_name.clone(),
+                    source_type: commitmux_types::MemorySourceType::MemoryFile,
+                    content,
+                    file_mtime,
+                };
+                store.upsert_memory_doc(&input)?;
+                total_ingested += 1;
+            }
+
+            println!(
+                "Indexed {} IMPL docs from {} ({} unchanged, skipped)",
+                total_ingested,
+                impl_dir.display(),
+                total_skipped
+            );
         }
     }
 
