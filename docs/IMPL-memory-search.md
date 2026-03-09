@@ -818,6 +818,34 @@ fn search_memory(&self, _embedding: &[f32], _opts: &commitmux_types::MemorySearc
 - `cargo test -p commitmux-mcp` -- 18 passed (including 2 existing tool input deserialization tests)
 - `cargo clippy -p commitmux-mcp -- -D warnings` -- 0 warnings
 
+### Agent A (Wave 2) - Completion Report
+
+**Status**: COMPLETE
+**Commit**: `e2acb62` (`feat(cli): add ingest-memory command for claudewatch memory file ingestion`)
+**Branch**: `worktree-agent-a9a4c32f`
+**File modified**: `src/main.rs`
+
+**What was implemented**:
+
+1. **src/main.rs** -- Added `IngestMemory` variant to `Commands` enum with `--claude-home` (Option<PathBuf>) and `--db` (Option<PathBuf>) arguments.
+
+2. **src/main.rs** -- Added handler in main match block:
+   - Resolves db path via `resolve_db_path`, opens `SqliteStore`
+   - Resolves claude_home (default `~/.claude`)
+   - Scans `projects/*/memory/*.md` under the claude directory
+   - For each `.md` file: checks file mtime against stored value, skips if unchanged
+   - Upserts new/changed docs with `MemorySourceType::MemoryFile`
+   - After ingestion, runs `embed_memory_pending` to generate embeddings (follows same tokio one-shot runtime pattern as Sync command)
+   - Prints summary (ingested count, skipped count, embedded count)
+
+3. **src/main.rs** -- Added `test_ingest_memory_command_parses` test verifying clap can parse `ingest-memory` with no flags, with `--claude-home`, with `--db`, and with both flags combined.
+
+**Build status**: Does not compile (expected) -- depends on `commitmux_embed::embed_memory_pending` from Wave 1B which has not been merged into this worktree. All other references (types, Store trait methods) resolve correctly from Wave 1A.
+
+**Out-of-scope build blockers**:
+- `commitmux_embed::embed_memory_pending` -- function from Wave 1B not yet merged into worktree
+- NullStore cascade in `crates/embed/src/lib.rs` -- noted as applied by Orchestrator but not present; needs Orchestrator merge fixup
+
 ### Post-Wave-2 Verification
 
 After merging all waves:

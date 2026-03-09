@@ -154,3 +154,100 @@ If this works reliably in one real agent session, it's worth continuing.
 - Default staleness threshold for auto-sync: 1 hour? configurable?
 - Should `search` FTS include patch_preview by default, or only on a flag?
 - Which refs to ingest post-MVP: all branches, or default only forever?
+
+---
+
+## Roadmap (post-MVP)
+
+*Added 2026-03-08 based on deep code review and real-world SAW protocol usage.*
+
+### P0 — Freshness (the fundamental gap)
+
+The tool is a **passive index** requiring manual `commitmux sync`. For agents asking
+about in-flight development this is the wrong model. An agent asking "what did we just
+implement?" needs data from right now, not from the last time a human remembered to sync.
+
+**`commitmux install-hook`** — writes a `post-commit` git hook to `.git/hooks/` that
+calls `commitmux sync --repo <path>` after every commit. Should be a first-class install
+step, not left to the user to figure out. Three lines of shell but it changes the
+freshness model from "batch" to "live."
+
+**Auto-sync on MCP startup** was listed as a day-one requirement in the seed doc but
+the current implementation does not do it. The MCP server opens the DB and immediately
+serves — it does not check `last_synced_at` or trigger a sync pass. Either implement
+the startup sync or document that the hook approach is the intended freshness mechanism.
+
+---
+
+### P1 — SAW Protocol Integration
+
+commitmux is installed in a SAW-heavy workflow. SAW produces structured merge commit
+messages (`Merge wave{N}-agent-{X}: description`) that are machine-parseable but treated
+as plain text by the current FTS index.
+
+**`commitmux_search_saw` MCP tool** — takes `feature` (string) and `wave` (int,
+optional) params, constructs the right FTS5 query internally, and returns results
+grouped by wave/agent. Agents should not need to know FTS5 syntax to find their own
+wave history.
+
+**IMPL doc indexing** — SAW IMPL docs live in `docs/IMPL/IMPL-*.md` in the working
+tree, not as standalone memory files. They contain wave execution history, completion
+reports, and interface contracts — exactly the kind of cross-session context agents
+need. The existing `memory_docs` infrastructure can handle this; it just needs an
+`--include-docs` flag on `ingest-memory` (or a new `commitmux index-impl-docs` command)
+that reads file content from the working tree rather than the git history.
+
+---
+
+### P2 — Tool API Improvements
+
+**`touches` glob fix** — the `path_glob` parameter does `LIKE %pattern%` internally.
+`src/**/*.rs` will not match `.rs` files; it will match the literal string `src/**/*.rs`
+which exists nowhere. Either implement real glob matching (`glob` crate), or rename the
+parameter to `path_substring` and document the actual behavior. The current API is
+silently wrong for any caller using glob syntax.
+
+**SHA consistency between tools** — `commitmux_get_commit` accepts prefix SHAs
+(`LIKE sha || '%'`), but `commitmux_get_patch` requires an exact SHA. An agent that
+calls `get_commit("abc12")` and then `get_patch("abc12")` with the same input will fail.
+`get_patch` should accept the same prefix matching as `get_commit`, or the `get_commit`
+response should document that the returned `sha` field (full SHA) is what `get_patch`
+requires.
+
+**FTS covers only 500 chars of diff** — `patch_preview` (stored in `commits` for FTS)
+is capped at 500 characters at ingest time. Long commit diffs — including SAW completion
+reports embedded in commit bodies — are truncated. The full patch is stored compressed
+in `commit_patches` but is not FTS-indexed. Consider raising the FTS preview to 2000
+chars, or adding a separate FTS pass over full decompressed patches for commits where
+the body is long.
+
+---
+
+### P3 — Memory Subsystem
+
+**Automatic memory ingestion** — `commitmux ingest-memory` must be run manually.
+For the claudewatch/MEMORY.md workflow, this means memory is only as fresh as the
+last manual run. Options:
+1. A `post-session` Claude Code hook that calls `commitmux ingest-memory` after each session
+2. A file watcher daemon (`commitmux watch-memory`) using FSEvents (macOS) / inotify (Linux)
+3. Document the hook approach explicitly so users know how to wire it
+
+**FTS over memory docs** — `commitmux_search_memory` is vector-only. If Ollama is not
+running, memory search fails entirely with no fallback. Adding FTS5 over `memory_docs.content`
+(same pattern as `commits_fts`) would give keyword search as a fallback and make the tool
+usable without Ollama.
+
+---
+
+### P4 — Embedding Model Flexibility
+
+The schema hardcodes `FLOAT[768]` for both `commit_embeddings` and `memory_embeddings`.
+This matches `nomic-embed-text` but breaks silently if the user switches to a model
+with different dimensions — old and new vectors co-exist in the same table and ANN
+results become nonsense. Options:
+1. Store the embedding dimension in the `config` table and validate on write
+2. On model change, require a `commitmux reindex --repo <name>` to rebuild the vector table
+3. Namespace by model in the table (complex)
+
+At minimum, `commitmux embed` should error if the embedding dimension does not match
+the dimension stored for existing vectors, rather than silently mixing incompatible vectors.
