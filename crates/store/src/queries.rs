@@ -3,9 +3,9 @@ use std::sync::MutexGuard;
 
 use commitmux_types::{
     Commit, CommitDetail, CommitFile, CommitFileDetail, CommitPatch, CommitmuxError, EmbedCommit,
-    IngestState, MemoryDoc, MemoryDocInput, MemoryMatch, MemorySearchOpts, MemorySourceType,
-    PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result, SearchOpts,
-    SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
+    IngestState, MemoryDoc, MemoryDocInput, MemoryFtsSearchOpts, MemoryMatch, MemorySearchOpts,
+    MemorySourceType, PatchResult, Repo, RepoInput, RepoListEntry, RepoStats, RepoUpdate, Result,
+    SearchOpts, SearchResult, SemanticSearchOpts, Store, TouchOpts, TouchResult,
 };
 
 use crate::SqliteStore;
@@ -1163,6 +1163,15 @@ impl Store for SqliteStore {
             )?
             .collect();
         Ok(results?)
+    }
+
+    fn search_memory_fts(
+        &self,
+        _query: &str,
+        _opts: &MemoryFtsSearchOpts,
+    ) -> Result<Vec<MemoryMatch>> {
+        // Stub — full FTS implementation is Agent D's responsibility (Wave 2)
+        Ok(vec![])
     }
 }
 
