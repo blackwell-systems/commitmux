@@ -10,7 +10,7 @@ pub mod tools;
 use std::io::{BufRead, Write};
 use std::sync::Arc;
 
-use commitmux_types::{MemorySearchOpts, SearchOpts, Store, TouchOpts};
+use commitmux_types::{MemoryFtsSearchOpts, MemorySearchOpts, SearchOpts, Store, TouchOpts};
 use serde_json::{json, Value};
 use tools::{
     GetCommitInput, GetPatchInput, SearchInput, SearchMemoryInput, SearchSawInput,
@@ -413,26 +413,45 @@ impl McpServer {
             .map_err(|e| format!("Embed config error: {e}"))?;
         let embedder = commitmux_embed::Embedder::new(&config);
 
-        // Embed the query (async → sync via block_on)
-        let embedding = tokio::runtime::Builder::new_current_thread()
+        // Embed the query (async → sync via block_on), falling back to FTS on failure
+        let embed_result = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .map_err(|e| format!("Failed to build tokio runtime: {e}"))?
-            .block_on(embedder.embed(&input.query))
-            .map_err(|e| format!("Failed to embed query: {e}"))?;
+            .map_err(|e| format!("Failed to build tokio runtime: {e}"))
+            .and_then(|rt| {
+                rt.block_on(embedder.embed(&input.query))
+                    .map_err(|_| "Ollama unavailable".to_string())
+            });
 
-        // Search
-        let opts = MemorySearchOpts {
-            project: input.project,
-            source_type: input.source_type,
+        let fts_opts = MemoryFtsSearchOpts {
+            project: input.project.clone(),
+            source_type: input.source_type.clone(),
             limit: input.limit,
         };
-        let results = self
-            .store
-            .search_memory(&embedding, &opts)
-            .map_err(|e| format!("Memory search failed: {e}"))?;
 
-        serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+        match embed_result {
+            Ok(embedding) => {
+                // Vector search path
+                let opts = MemorySearchOpts {
+                    project: input.project,
+                    source_type: input.source_type,
+                    limit: input.limit,
+                };
+                let results = self
+                    .store
+                    .search_memory(&embedding, &opts)
+                    .map_err(|e| format!("Memory search failed: {e}"))?;
+                serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            }
+            Err(_) => {
+                // FTS fallback path
+                let results = self
+                    .store
+                    .search_memory_fts(&input.query, &fts_opts)
+                    .map_err(|e| format!("Memory FTS search failed: {e}"))?;
+                serde_json::to_string_pretty(&results).map_err(|e| e.to_string())
+            }
+        }
     }
 
     fn call_search_saw(&self, arguments: &Value) -> Result<String, String> {
@@ -656,6 +675,9 @@ mod tests {
         ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
         }
+        fn delete_embeddings_for_repo(&self, _repo_id: i64) -> StoreResult<()> {
+            Ok(())
+        }
     }
 
     fn make_server() -> McpServer {
@@ -829,6 +851,9 @@ mod tests {
             _opts: &commitmux_types::MemoryFtsSearchOpts,
         ) -> StoreResult<Vec<commitmux_types::MemoryMatch>> {
             Ok(vec![])
+        }
+        fn delete_embeddings_for_repo(&self, _repo_id: i64) -> StoreResult<()> {
+            Ok(())
         }
     }
 
