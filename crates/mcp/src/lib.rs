@@ -138,11 +138,11 @@ impl McpServer {
                     },
                     {
                         "name": "commitmux_touches",
-                        "description": "Find commits that touched a given path pattern",
+                        "description": "Find commits that touched a given path. Note: path_glob uses substring matching (LIKE %pattern%), not shell glob syntax. Use substrings like 'src/' or '.rs' — patterns like 'src/**/*.rs' will not match.",
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "path_glob": { "type": "string", "description": "Path substring to match" },
+                                "path_glob": { "type": "string", "description": "Path substring to match (e.g. 'src/' or '.rs'). Note: glob patterns like '**/*.rs' are NOT supported — use plain substrings." },
                                 "since": { "type": "integer" },
                                 "repos": { "type": "array", "items": { "type": "string" } },
                                 "limit": { "type": "integer" }

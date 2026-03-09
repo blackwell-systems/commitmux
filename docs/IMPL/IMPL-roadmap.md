@@ -1,4 +1,5 @@
 # IMPL: commitmux Post-MVP Roadmap (P0–P4)
+<!-- SAW:COMPLETE 2026-03-09 -->
 
 ## Suitability Assessment
 
@@ -1120,5 +1121,35 @@ Build, clippy (`-D warnings`), and all 89 workspace tests pass.
 ## Stub Report — Wave 1
 
 65 `unimplemented!()` hits across 3 files — all pre-existing test mock stubs (NullStore, MockStore, StubStore). None introduced by Wave 1 agents (agents used `Ok(vec![])` for cascade stubs). All 89 workspace tests pass; no stubs triggered. No action required.
+
+---
+
+### Agent D - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: main (solo wave)
+branch: main
+commit: 363a7d7
+files_changed:
+  - crates/store/src/queries.rs
+  - crates/store/src/schema.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - queries::tests::test_search_memory_fts_basic
+  - queries::tests::test_get_patch_prefix_sha
+verification: PASS
+```
+
+All five fixes implemented cleanly:
+
+1. `memory_docs_fts` FTS5 virtual table added to `SCHEMA_SQL` in schema.rs — content table backed by `memory_docs`, rowid mapped to `doc_id`.
+2. `search_memory_fts` stub replaced with real FTS5 implementation — dynamic WHERE clause for optional `project`/`source_type` filters, `bm25()` scoring, same param-binding pattern as `search()`.
+3. `patch_preview` cap raised 500 → 2000 chars in `upsert_patch`.
+4. `get_patch` now uses `LIKE ?2 || '%'` prefix SHA matching and returns the full SHA from the DB row (not the prefix passed in).
+5. `upsert_memory_doc` now syncs the FTS index after upsert (delete old entry + insert new), following the same pattern as `upsert_commit` with `commits_fts`.
+
+All 35 store tests pass, clippy clean, full workspace build and test suite passes (93 tests total).
 
 Files: `crates/embed/src/lib.rs` (21), `crates/ingest/src/lib.rs` (13), `crates/mcp/src/lib.rs` (31).
