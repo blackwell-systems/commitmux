@@ -864,7 +864,7 @@ mod tests {
             tool_names.contains(&"commitmux_get_patch"),
             "missing commitmux_get_patch"
         );
-        assert_eq!(tool_names.len(), 7, "must have exactly 7 tools");
+        assert_eq!(tool_names.len(), 8, "must have exactly 8 tools");
     }
 
     #[test]
