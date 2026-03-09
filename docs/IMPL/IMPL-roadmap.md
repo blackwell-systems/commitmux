@@ -1025,3 +1025,94 @@ After wave 2 completes:
 | 1    | G     | Embed: dimension validation guard + tests | TO-DO |
 | 2    | D     | Store: FTS memory search impl, patch_preview→2000, `get_patch` prefix SHA, `memory_docs_fts` schema | TO-DO |
 | —    | Orch  | MCP touches description fix (out_of_scope from D), post-merge install + integration test | TO-DO |
+
+---
+
+### Agent A - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-A
+branch: wave1-agent-A
+commit: 0105f27a871188f6fd7cbe851419aff00ca40b6c
+files_changed:
+  - crates/types/src/lib.rs
+  - crates/embed/src/lib.rs
+  - crates/ingest/src/lib.rs
+  - crates/store/src/queries.rs
+  - crates/mcp/src/lib.rs
+files_created: []
+interface_deviations: []
+out_of_scope_deps:
+  - crates/store/src/queries.rs (owned by Agent D) required a cascade stub for SqliteStore to satisfy cargo build --workspace; added minimal Ok(vec![]) stub only, no FTS logic
+  - crates/mcp/src/lib.rs (owned by Agent C) required cascade stubs for StubStore and StubStoreWithRepos; added minimal Ok(vec![]) stubs only
+tests_added: []
+verification: PASS
+```
+
+All changes are minimal stubs returning `Ok(vec![])`. The `search_memory_fts` trait method was added to `Store`, `MemoryFtsSearchOpts` struct added after `MemorySearchOpts`, and `ImplDoc` variant added to `MemorySourceType` with `"impl_doc"` in both `as_str()` and `from_str()`. Four additional files outside strict ownership had to receive cascade stubs to satisfy `cargo build --workspace` — these are noted in `out_of_scope_deps`. Agent D should replace the `queries.rs` stub with the real FTS implementation; Agent C may wish to review/own the `mcp/src/lib.rs` stubs.
+
+### Agent C - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-C
+branch: wave1-agent-C
+commit: 584a5305cdd3aba0fdd09fbeb969b1feaae84a84
+files_changed:
+  - crates/mcp/src/tools.rs
+  - crates/mcp/src/lib.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added: []
+verification: PASS
+```
+
+Added `SearchSawInput` struct to `tools.rs`, imported it in `lib.rs`, added the tool schema to `handle_tools_list`, dispatch arm in `handle_tools_call`, and the `call_search_saw` implementation. The implementation reuses `self.store.search()` with a constructed FTS5 query — no new Store trait methods required. All 18 existing tests pass; clippy and build both clean.
+
+### Agent G - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-G
+branch: wave1-agent-G
+commit: 3f12ef17e72978c4d035180cf9677c3344049060
+files_changed:
+  - crates/embed/src/lib.rs
+interface_deviations: []
+out_of_scope_deps: []
+tests_added:
+  - test_validate_dimension_first_call_stores
+  - test_validate_dimension_match_ok
+  - test_validate_dimension_mismatch_errors
+verification: PASS
+```
+
+`get_config`/`set_config` already existed on the Store trait (no out_of_scope_dep needed). The existing `NullStore` in the test module was upgraded from a no-op unit struct to a stateful struct with a `Mutex<HashMap>` to enable dimension storage across calls within a single test. The `validate_or_store_dimension` function and `CONFIG_KEY_EMBED_DIM` constant were added before `embed_pending`. The guard in `embed_pending` uses a `first_checked` bool to call validation only on the first successful embedding per batch loop (not per batch). All 12 tests pass; clippy and build clean.
+
+### Agent B - Completion Report
+
+```yaml type=impl-completion-report
+status: complete
+worktree: .claude/worktrees/wave1-agent-B
+branch: wave1-agent-B
+commit: 6be614d
+files_changed:
+  - src/main.rs
+interface_deviations:
+  - IndexImplDocs uses MemorySourceType::MemoryFile instead of MemorySourceType::ImplDoc
+    (ImplDoc variant does not exist yet; added by Agent A post-merge)
+out_of_scope_deps: []
+tests_added: []
+verification: PASS
+```
+
+All three features implemented in `src/main.rs`:
+
+1. `install-hook`: Writes `#!/bin/sh\ncommitmux sync --repo "$(git rev-parse --show-toplevel)" 2>/dev/null || true` to `.git/hooks/post-commit`, chmod 0o755. Guards against overwrite without `--force`. Validates `.git` directory exists.
+
+2. `index-impl-docs`: Scans `<path>/docs/IMPL/*.md`, upserts each as a `MemoryDocInput` with mtime-based skip logic (same pattern as `IngestMemory`). Uses `MemorySourceType::MemoryFile` as fallback — **change to `MemorySourceType::ImplDoc` after Agent A's changes are merged into main**.
+
+3. Auto-sync in `Serve`: Before `run_mcp_server`, calls `store.list_repos()` and for each repo checks `get_ingest_state`. Syncs if `last_synced_at` is absent (no IngestState row) or `(now - last_synced_at) > 3600`. All output via `eprintln!` to avoid polluting MCP stdout. Errors on individual repos are non-fatal.
+
+Build, clippy (`-D warnings`), and all 89 workspace tests pass.

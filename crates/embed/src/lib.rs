@@ -13,7 +13,10 @@ pub fn validate_or_store_dimension(
     embedding: &[f32],
 ) -> anyhow::Result<()> {
     let dim = embedding.len();
-    match store.get_config(CONFIG_KEY_EMBED_DIM).map_err(|e| anyhow::anyhow!("{e}"))? {
+    match store
+        .get_config(CONFIG_KEY_EMBED_DIM)
+        .map_err(|e| anyhow::anyhow!("{e}"))?
+    {
         None => {
             store
                 .set_config(CONFIG_KEY_EMBED_DIM, &dim.to_string())
@@ -657,7 +660,11 @@ mod tests {
         let stored = store
             .get_config(CONFIG_KEY_EMBED_DIM)
             .expect("get_config should succeed");
-        assert_eq!(stored, Some("768".to_string()), "dimension should be stored as '768'");
+        assert_eq!(
+            stored,
+            Some("768".to_string()),
+            "dimension should be stored as '768'"
+        );
     }
 
     #[test]
@@ -668,7 +675,11 @@ mod tests {
         validate_or_store_dimension(&store, &embedding).expect("first call should succeed");
         // Second call with same dimension should also succeed
         let result = validate_or_store_dimension(&store, &embedding);
-        assert!(result.is_ok(), "second call with same dimension should succeed: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "second call with same dimension should succeed: {:?}",
+            result
+        );
     }
 
     #[test]

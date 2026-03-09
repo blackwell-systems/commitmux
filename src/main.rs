@@ -188,11 +188,16 @@ enum Commands {
         )]
         db: Option<PathBuf>,
     },
-    #[command(about = "Install a post-commit git hook that calls 'commitmux sync' after every commit")]
+    #[command(
+        about = "Install a post-commit git hook that calls 'commitmux sync' after every commit"
+    )]
     InstallHook {
         #[arg(help = "Path to the git repository root")]
         repo: PathBuf,
-        #[arg(long, help = "Path to database file (default: ~/.commitmux/db.sqlite3)")]
+        #[arg(
+            long,
+            help = "Path to database file (default: ~/.commitmux/db.sqlite3)"
+        )]
         db: Option<PathBuf>,
         #[arg(long, help = "Overwrite existing hook without prompting")]
         force: bool,
@@ -892,7 +897,10 @@ fn main() -> Result<()> {
                     }
                 }
                 Err(e) => {
-                    eprintln!("commitmux: warning: failed to list repos for auto-sync: {}", e);
+                    eprintln!(
+                        "commitmux: warning: failed to list repos for auto-sync: {}",
+                        e
+                    );
                 }
             }
 
@@ -1005,7 +1013,7 @@ fn main() -> Result<()> {
                     let input = commitmux_types::MemoryDocInput {
                         source,
                         project: project_name.clone(),
-                        source_type: commitmux_types::MemorySourceType::MemoryFile,
+                        source_type: commitmux_types::MemorySourceType::ImplDoc,
                         content,
                         file_mtime,
                     };
@@ -1015,7 +1023,7 @@ fn main() -> Result<()> {
             }
 
             println!(
-                "Ingested {} memory files ({} unchanged, skipped)",
+                "Ingested {} IMPL docs ({} unchanged, skipped)",
                 total_ingested, total_skipped
             );
 
@@ -1045,14 +1053,17 @@ fn main() -> Result<()> {
         }
 
         Commands::InstallHook { repo, db: _, force } => {
-            let canonical = repo.canonicalize().with_context(|| {
-                format!("Failed to canonicalize repo path: {}", repo.display())
-            })?;
+            let canonical = repo
+                .canonicalize()
+                .with_context(|| format!("Failed to canonicalize repo path: {}", repo.display()))?;
 
             // Verify it's a git repository
             let git_dir = canonical.join(".git");
             if !git_dir.is_dir() {
-                anyhow::bail!("'{}' is not a git repository (no .git directory found)", canonical.display());
+                anyhow::bail!(
+                    "'{}' is not a git repository (no .git directory found)",
+                    canonical.display()
+                );
             }
 
             let hooks_dir = git_dir.join("hooks");
@@ -1085,10 +1096,7 @@ fn main() -> Result<()> {
                 })?;
             }
 
-            println!(
-                "Installed post-commit hook at {}",
-                hook_path.display()
-            );
+            println!("Installed post-commit hook at {}", hook_path.display());
         }
 
         Commands::IndexImplDocs { path, project, db } => {
@@ -1102,9 +1110,9 @@ fn main() -> Result<()> {
             let store = SqliteStore::open(&db_path)
                 .with_context(|| format!("Failed to open database at {}", db_path.display()))?;
 
-            let canonical = path.canonicalize().with_context(|| {
-                format!("Failed to canonicalize path: {}", path.display())
-            })?;
+            let canonical = path
+                .canonicalize()
+                .with_context(|| format!("Failed to canonicalize path: {}", path.display()))?;
 
             // Derive project name from directory name if not provided
             let project_name = project.unwrap_or_else(|| {
@@ -1117,10 +1125,7 @@ fn main() -> Result<()> {
 
             let impl_dir = canonical.join("docs").join("IMPL");
             if !impl_dir.is_dir() {
-                anyhow::bail!(
-                    "No docs/IMPL/ directory found at {}",
-                    impl_dir.display()
-                );
+                anyhow::bail!("No docs/IMPL/ directory found at {}", impl_dir.display());
             }
 
             let mut total_ingested = 0usize;
@@ -1155,12 +1160,10 @@ fn main() -> Result<()> {
                 }
 
                 let content = std::fs::read_to_string(&entry_path)?;
-                // NOTE: Using MemorySourceType::MemoryFile as fallback.
-                // Change to MemorySourceType::ImplDoc post-merge once Agent A's changes are merged.
                 let input = commitmux_types::MemoryDocInput {
                     source,
                     project: project_name.clone(),
-                    source_type: commitmux_types::MemorySourceType::MemoryFile,
+                    source_type: commitmux_types::MemorySourceType::ImplDoc,
                     content,
                     file_mtime,
                 };
